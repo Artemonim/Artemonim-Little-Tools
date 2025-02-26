@@ -5,11 +5,13 @@ import asyncio
 # =========================
 # Конфигурационные переменные
 # =========================
-INPUT_FOLDER = r"C:\Path\To\InputFolder"       # путь к папке с исходными .mkv файлами
-OUTPUT_FOLDER = r"C:\Path\To\OutputFolder"       # путь к папке для сохранения результатов
-# Определяем количество потоков: половина ядер или 4, если не удалось получить число ядер
-cpu_count = os.cpu_count() if os.cpu_count() is not None else 4
-MAX_WORKERS = cpu_count // 2 if cpu_count // 2 > 0 else 4
+INPUT_FOLDER = r"D:/Закачка видео/Сериалы/Evangelion"       # путь к папке с исходными .mkv файлами
+OUTPUT_FOLDER = r"G:/Temp/Eva01"       # путь к папке для сохранения результатов
+MANUAL_THREAD_LIMIT = 2
+AUTO_THREAD_LIMIT_DIVIDER = 3
+# Определяем количество потоков
+cpu_count = os.cpu_count() if os.cpu_count() is not None else MANUAL_THREAD_LIMIT
+MAX_WORKERS = cpu_count // AUTO_THREAD_LIMIT_DIVIDER if cpu_count // AUTO_THREAD_LIMIT_DIVIDER > 0 else MANUAL_THREAD_LIMIT
 
 # =========================
 # Асинхронная обработка файла

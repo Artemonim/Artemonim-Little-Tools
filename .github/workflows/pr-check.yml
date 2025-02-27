@@ -1,0 +1,27 @@
+name: PR Validator
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  validate-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Extract PR body
+        id: extract
+        run: echo "::set-output name=body::$(jq --raw-output .pull_request.body $GITHUB_EVENT_PATH)"
+      - name: Validate checkboxes and placeholders
+        run: |
+          pr_body="${{ steps.extract.outputs.body }}"
+          
+          # Checkbox validation: looking for unchecked items
+          if echo "$pr_body" | grep -q "\- \[ \]"; then
+            echo "Error: check the checkboxes."
+            exit 1
+          fi
+          
+          # Placeholders check: looking for placeholders
+          if echo "$pr_body" | grep -q -E "write_me_baby|type_here_honey|dump_words_here_darling"; then
+            echo "Error: replace the placeholders."
+            exit 1
+          fi

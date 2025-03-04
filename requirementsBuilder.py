@@ -23,6 +23,7 @@ import argparse
 import ast
 from pathlib import Path
 from typing import Set, List, Optional
+import fnmatch
 
 # Configuration variables
 STANDARD_LIBRARIES = {
@@ -62,8 +63,13 @@ STANDARD_LIBRARIES = {
 
 def get_installed_package_version(package_name: str) -> Optional[str]:
     """
-    Returns the installed version of a package using 'pip show'.
-    If package is not installed, returns None.
+    Retrieves the installed version of a package using 'pip show'.
+
+    Args:
+        package_name (str): Name of the package to check.
+
+    Returns:
+        Optional[str]: Version of the package if installed, None otherwise.
     """
     try:
         result = subprocess.run([
@@ -79,8 +85,13 @@ def get_installed_package_version(package_name: str) -> Optional[str]:
 
 def get_installed_package_location(package_name: str) -> Optional[str]:
     """
-    Returns the installation location of a package using 'pip show'.
-    If package is not installed, returns None.
+    Retrieves the installation location of a package using 'pip show'.
+
+    Args:
+        package_name (str): Name of the package to locate.
+
+    Returns:
+        Optional[str]: Installation path of the package if installed, None otherwise.
     """
     try:
         result = subprocess.run([
@@ -97,7 +108,18 @@ def get_installed_package_location(package_name: str) -> Optional[str]:
 def find_imports_in_file_ast(file_path: Path) -> Set[str]:
     """
     Parses a Python file using AST to find all non-standard imported modules.
-    It catches imports in all scopes including conditional imports and within functions.
+
+    Detects imports in all scopes including conditional imports and within functions.
+    Skips standard library and relative imports.
+
+    Args:
+        file_path (Path): Path to the Python file to analyze.
+
+    Returns:
+        Set[str]: Set of non-standard imported module names.
+
+    Warns:
+        Prints a warning message if the file cannot be processed.
     """
     third_party_imports = set()
     try:
@@ -121,21 +143,116 @@ def find_imports_in_file_ast(file_path: Path) -> Set[str]:
     return third_party_imports
 
 
+def load_gitignore(directory: Path) -> List[str]:
+    """
+    Loads .gitignore file from the given directory.
+
+    If .gitignore does not exist, prompts user to create one with .venv exclusion.
+    Always ensures '.venv' is included in ignore patterns.
+
+    Args:
+        directory (Path): Directory to search for .gitignore file.
+
+    Returns:
+        List[str]: List of ignore patterns, always including '.venv'.
+
+    Warns:
+        Prints warning messages if .gitignore cannot be read or created.
+    """
+    gitignore_file = directory / '.gitignore'
+    patterns = []
+    patterns.append('.venv')
+    if not gitignore_file.exists():
+        response = input(".gitignore file not found. Do you want to create one with '.venv' exclusion (y/n)? ").strip().lower()
+        if response in ['y', 'yes']:
+            try:
+                with open(gitignore_file, 'w', encoding='utf-8') as f:
+                    f.write(".venv\n")
+                print("Created .gitignore with '.venv' exclusion.")
+            except Exception as e:
+                print(f"Warning: Could not create .gitignore: {e}")
+        else:
+            print("Continuing without creating .gitignore, but '.venv' will be excluded anyway.")
+    else:
+        try:
+            with open(gitignore_file, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line and not line.startswith('#'):
+                        patterns.append(line)
+        except Exception as e:
+            print(f"Warning: Could not read .gitignore: {e}")
+    return patterns
+
+
+def is_ignored(file_path: Path, ignore_patterns: List[str], base_dir: Path) -> bool:
+    """
+    Checks if a file path matches any of the ignore patterns.
+
+    Prioritizes checking if any part of the path is in ignored directories.
+
+    Args:
+        file_path (Path): Path to the file to check.
+        ignore_patterns (List[str]): List of patterns to ignore.
+        base_dir (Path): Base directory for relative path calculation.
+
+    Returns:
+        bool: True if the file should be ignored, False otherwise.
+    """
+    try:
+        relative = str(file_path.relative_to(base_dir))
+    except ValueError:
+        relative = str(file_path)
+    
+    # First check if any part of the path is in ignored directories
+    path_parts = Path(relative).parts
+    if any(part in ignore_patterns for part in path_parts):
+        return True
+    
+    # Then do fnmatch pattern matching
+    for pattern in ignore_patterns:
+        if fnmatch.fnmatch(relative, pattern):
+            return True
+    
+    return False
+
+
 def find_python_files(directory: Path) -> List[Path]:
     """
     Recursively finds all Python files in the given directory.
+
+    Excludes files and directories that match patterns in .gitignore.
+
+    Args:
+        directory (Path): Directory to search for Python files.
+
+    Returns:
+        List[Path]: List of Python file paths that are not ignored.
     """
-    return list(directory.glob('**/*.py'))
+    ignore_patterns = load_gitignore(directory)
+    all_files = list(directory.glob('**/*.py'))
+    return [f for f in all_files if not is_ignored(f, ignore_patterns, directory)]
 
 
 def generate_requirements(directory: Path, output_path: Optional[Path] = None, show_location: bool = False) -> Path:
     """
     Generates a requirements file by scanning Python files for non-standard imports.
-    For each third-party import, it checks the installed package version via pip.
-    If show_location is True, it will also include the installation location as a comment.
 
-    If output_path is not provided, defaults to a file named 'requirements.txt' in the scan directory.
-    The file is overwritten if it exists.
+    Scans all Python files, finds third-party imports, checks their installed versions,
+    and optionally includes installation locations.
+
+    Args:
+        directory (Path): Directory to scan for Python files.
+        output_path (Optional[Path], optional): Path to save requirements.txt. 
+            Defaults to 'requirements.txt' in the scan directory.
+        show_location (bool, optional): Whether to include package installation locations. 
+            Defaults to False.
+
+    Returns:
+        Path: Path to the generated requirements.txt file.
+
+    Prompts:
+        Asks user whether to install the discovered requirements.
     """
     if output_path is None:
         output_path = directory / 'requirements.txt'
@@ -165,8 +282,21 @@ def generate_requirements(directory: Path, output_path: Optional[Path] = None, s
                 if location:
                     f.write(f"# installed at: {location}\n")
 
-    print(f"Found {len(sorted_imports)} third-party module imports.")
     print(f"Requirements file generated at: {output_path}")
+    
+    if sorted_imports:
+        print(f"Found {len(sorted_imports)} third-party module imports.")
+        while True:
+                response = input("Do you want to install the requirements now? (y/n): ").lower().strip()
+                if response in ['y', 'yes']:
+                    install_requirements(output_path)
+                    break
+                elif response in ['n', 'no']:
+                    break
+                else:
+                    print("Please enter 'y' or 'n'")
+    else:
+        print("No third-party modules found.")        
 
     return output_path
 
@@ -174,6 +304,12 @@ def generate_requirements(directory: Path, output_path: Optional[Path] = None, s
 def install_requirements(requirements_path: Path) -> None:
     """
     Installs packages from the generated requirements file using pip.
+
+    Args:
+        requirements_path (Path): Path to the requirements.txt file.
+
+    Raises:
+        subprocess.CalledProcessError: If pip install fails.
     """
     try:
         subprocess.run([
@@ -187,49 +323,50 @@ def install_requirements(requirements_path: Path) -> None:
 def main() -> int:
     """
     Main function to parse CLI arguments and run the requirements generation process.
+
+    Handles command-line arguments for directory scanning, output path, and location display.
+    Includes Ctrl+C handling.
+
+    Returns:
+        int: Exit code (0 for success, 1 for directory error, 130 for keyboard interrupt).
     """
-    parser = argparse.ArgumentParser(
-        description="Generate requirements.txt by scanning Python files for imports"
-    )
-    parser.add_argument(
-        '-d', '--dir', 
-        type=str, 
-        default='.', 
-        help='Directory to scan for Python files (default: current directory)'
-    )
-    parser.add_argument(
-        '-o', '--output', 
-        type=str, 
-        help='Output path for requirements.txt (default: requirements.txt in the scan directory)'
-    )
-    parser.add_argument(
-        '-l', '--show-location', 
-        action='store_true', 
-        help='Include the installation location of the package as a comment in the requirements file'
-    )
+    try:
+        parser = argparse.ArgumentParser(
+            description="Generate requirements.txt by scanning Python files for imports"
+        )
+        parser.add_argument(
+            '-d', '--dir', 
+            type=str, 
+            default='.', 
+            help='Directory to scan for Python files (default: current directory)'
+        )
+        parser.add_argument(
+            '-o', '--output', 
+            type=str, 
+            help='Output path for requirements.txt (default: requirements.txt in the scan directory)'
+        )
+        parser.add_argument(
+            '-l', '--show-location', 
+            action='store_true', 
+            help='Include the installation location of the package as a comment in the requirements file'
+        )
 
-    args = parser.parse_args()
+        args = parser.parse_args()
 
-    scan_dir = Path(args.dir).resolve()
-    output_path = Path(args.output).resolve() if args.output else None
+        scan_dir = Path(args.dir).resolve()
+        output_path = Path(args.output).resolve() if args.output else None
 
-    if not scan_dir.is_dir():
-        print(f"Error: {scan_dir} is not a valid directory")
-        return 1
+        if not scan_dir.is_dir():
+            print(f"Error: {scan_dir} is not a valid directory")
+            return 1
 
-    requirements_path = generate_requirements(scan_dir, output_path, args.show_location)
+        generate_requirements(scan_dir, output_path, args.show_location)
 
-    while True:
-        response = input("Do you want to install the requirements now? (y/n): ").lower().strip()
-        if response in ['y', 'yes']:
-            install_requirements(requirements_path)
-            break
-        elif response in ['n', 'no']:
-            break
-        else:
-            print("Please enter 'y' or 'n'")
+        return 0
 
-    return 0
+    except KeyboardInterrupt:
+        print("\nScript interrupted by user. Exiting...")
+        return 130  # Standard exit code for Ctrl+C
 
 
 if __name__ == '__main__':

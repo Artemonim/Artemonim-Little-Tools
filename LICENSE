@@ -1,27 +1,20 @@
                     ARTEMONIM'S LITTLE TOOLS LICENSE
-                       Version 1, 27 February 2025
+                       Version 2, 05 March 2025
 
 Copyright (C) 2025 Artemonim
-Licensing: Dual License - GNU General Public License v3 (GPLv3) and Commercial License.
 
----
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-**GNU General Public License v3 (GPLv3)**
+    http://www.apache.org/licenses/LICENSE-2.0
 
-ARTEMONIM'S LITTLE TOOLS is distributed under the GNU General Public License version 3 (GPLv3) for most uses, including personal, educational, non-profit, and commercial use, **except for cases explicitly requiring a Commercial License (see below).**
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
-The full text of the GPLv3 license is included in this repository as [GPLv3](Legal/GPLv3) and is also available at [gnu.org](https://www.gnu.org/licenses/gpl-3.0.en.html)
+**Additional condition for commercial use**
 
-**Commercial License**
-
-For certain commercial uses of ARTEMONIM'S LITTLE TOOLS, a Commercial License must be purchased from Artemonim.
-
-**A Commercial License is required if the Software is used as part of a product or service that is offered for sale or subscription to end-users.**
-
-If your use of ARTEMONIM'S LITTLE TOOLS falls under the above criterion, you are required to purchase a Commercial License. Please contact [t.me/Artemonim](https://t.me/Artemonim) or Artemonim@yandex.ru for pricing and Commercial License terms.
-
-**Benefits of the Commercial License:**
-
-* Right to embed the Software in proprietary products without disclosing source code.
-
-**For licensing inquiries, please contact:** [t.me/Artemonim](https://t.me/Artemonim) or Artemonim@yandex.ru
+If ARTEMONIM'S LITTLE TOOLS is used in a product or service intended for sale, subscription or commercial exploitation by end users, you must purchase a commercial license from Artemonim. Contact [t.me/Artemonim](https://t.me/Artemonim) or Artemonim@yandex.ru for pricing and terms.

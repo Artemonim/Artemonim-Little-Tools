@@ -11,13 +11,16 @@ import sys
 import os
 import difflib
 import signal
+import json
+import pickle
 from typing import List, Dict, Tuple, Optional, Set, Any
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QTextEdit, QLabel, QFileDialog, QScrollArea,
     QSplitter, QTabWidget, QToolBar, QStatusBar, QComboBox, QMenu,
     QGridLayout, QFrame, QSizePolicy, QCheckBox, QDialogButtonBox,
-    QDialog, QListWidget, QListWidgetItem, QLineEdit, QToolTip
+    QDialog, QListWidget, QListWidgetItem, QLineEdit, QToolTip,
+    QColorDialog, QInputDialog
 )
 from PyQt6.QtGui import (
     QTextCharFormat, QColor, QTextCursor, QPalette, 
@@ -31,16 +34,33 @@ DEFAULT_WINDOW_WIDTH = 1200
 DEFAULT_WINDOW_HEIGHT = 800
 DEFAULT_FONT_FAMILY = "Consolas"
 DEFAULT_FONT_SIZE = 10
+CACHE_FILENAME = "infinite_differ_cache.pkl"  # Filename for workspace cache
+
+# Default source tab colors - darker pastel colors (using hex values)
+DEFAULT_SOURCE_COLORS = [
+    QColor("#B484F0"),
+    QColor("#F084F0"),
+    QColor("#F0B0B4"),
+    QColor("#B4F0F0"),
+    QColor("#F0C8B4"),
+    QColor("#C8F0B4"),
+    QColor("#E6B4D2"),
+    QColor("#D2D2F0"),
+    QColor("#DCDCDC"),
+    QColor("#C8DCC8"),
+]
+
+# Highlight colors for diff operations (using hex values)
 HIGHLIGHT_COLORS = {
-    "addition": QColor(205, 255, 205),  # Light green
-    "deletion": QColor(255, 205, 205),  # Light red
-    "modification": QColor(255, 255, 205),  # Light yellow
-    "same": QColor(255, 255, 255),  # White
-    "source1": QColor(230, 130, 255),  # Light blue
-    "source2": QColor(255, 130, 255),  # Light purple
-    "source3": QColor(255, 155, 230),  # Light yellow
-    "source4": QColor(230, 155, 255),  # Light cyan
-    "source5": QColor(255, 140, 230),  # Light orange
+    "addition": QColor("#4DAF4D"),
+    "deletion": QColor("#FF4D4D"),
+    "modification": QColor("#AFAFCD"),
+    "same": QColor("#AAAAFF"),
+    "source1": QColor("#E6E666"),
+    "source2": QColor("#0F8666"),
+    "source3": QColor("#FF2FE6"),
+    "source4": QColor("#E6FFFF"),
+    "source5": QColor("#FFF0E6"),
 }
 
 
@@ -56,6 +76,7 @@ class LineNumberArea(QWidget):
         super().__init__(editor)
         self.editor = editor
         self.setFont(QFont(DEFAULT_FONT_FAMILY, DEFAULT_FONT_SIZE))
+        self.setStyleSheet("background-color: #f0f0f0;")
     
     def sizeHint(self):
         """Calculate the size hint for the line number area."""
@@ -86,11 +107,13 @@ class SearchWidget(QWidget):
         # Set up layout
         layout = QHBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
         
         # Search input
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search...")
         self.search_input.textChanged.connect(self.update_search)
+        self.search_input.returnPressed.connect(self.search_down)  # Search on Enter
         layout.addWidget(self.search_input)
         
         # Up button
@@ -111,14 +134,31 @@ class SearchWidget(QWidget):
         self.count_button.clicked.connect(self.count_matches)
         layout.addWidget(self.count_button)
         
+        # Close button
+        self.close_button = QPushButton("❌")
+        self.close_button.setToolTip("Close search")
+        self.close_button.clicked.connect(self.hide_search)
+        layout.addWidget(self.close_button)
+        
         # Set fixed size for buttons
-        for button in [self.up_button, self.down_button, self.count_button]:
-            button.setFixedSize(30, 30)
+        for button in [self.up_button, self.down_button, self.count_button, self.close_button]:
+            button.setFixedSize(24, 24)
+            button.setStyleSheet("padding: 0px;")
+        
+        # Set widget styling
+        self.setStyleSheet("""
+            QWidget {
+                background-color: rgba(240, 240, 240, 0.9);
+                border: 1px solid #aaa;
+                border-radius: 3px;
+            }
+        """)
         
         # Store the last search position
         self.last_search_position = 0
         
         # Set initial visibility
+        self.setFixedHeight(30)
         self.setVisible(False)
     
     def show_search(self):
@@ -161,18 +201,21 @@ class SearchWidget(QWidget):
         count = self.text_edit.count_occurrences(search_text)
         
         # Find the main window to access the status bar
-        parent = self.parent()
+        parent = self.text_edit
         while parent and not isinstance(parent, QMainWindow):
             parent = parent.parent()
         
         if parent and isinstance(parent, QMainWindow):
             parent.statusBar().showMessage(f"Found {count} occurrences of '{search_text}'", 3000)
         else:
-            # If we can't find the main window, just create a temporary tooltip
-            QToolTip.showText(self.count_button.mapToGlobal(QPoint(0, 30)), 
-                             f"Found {count} occurrences", 
-                             self.count_button, 
-                             QRect(), 3000)
+            # Create a tooltip instead
+            QToolTip.showText(
+                self.mapToGlobal(QPoint(0, self.height())),
+                f"Found {count} occurrences",
+                self,
+                QRect(),
+                3000
+            )
 
 
 class DiffTextEdit(QTextEdit):
@@ -201,8 +244,8 @@ class DiffTextEdit(QTextEdit):
         # Initialize line number area
         self.update_line_number_area_width(0)
         
-        # Initialize search widget
-        self.search_widget = SearchWidget(self, self)
+        # Create search bar - embedded in the parent widget for proper display
+        self.search_widget = SearchWidget(self, parent if parent else self)
         
         # Add keyboard shortcut for search
         self.search_action = QAction("Search", self)
@@ -216,6 +259,57 @@ class DiffTextEdit(QTextEdit):
         # Store search highlight positions
         self.search_positions = []
         self.current_match_index = -1
+        
+        # Override layout on parent change to ensure search widget is shown correctly
+        self.installEventFilter(self)
+    
+    def eventFilter(self, obj, event):
+        """Filter events to handle parent changes.
+        
+        Args:
+            obj: The object that received the event
+            event: The event
+            
+        Returns:
+            True if the event was handled, False otherwise
+        """
+        if obj == self and self.search_widget and self.parent():
+            if event.type() == 42:  # QEvent.Polish
+                # Delay positioning until parent is fully initialized
+                QApplication.instance().processEvents()
+                self.position_search_widget()
+        return False
+    
+    def showEvent(self, event):
+        """Handle show events to ensure search widget is positioned correctly.
+        
+        Args:
+            event: The show event
+        """
+        super().showEvent(event)
+        # Delay positioning until this widget is fully shown
+        QApplication.instance().processEvents()
+        self.position_search_widget()
+    
+    def position_search_widget(self):
+        """Position the search widget in the parent widget."""
+        if not self.search_widget or not self.parent() or not self.isVisible():
+            return
+        
+        # Get the global position of this widget's top-right corner
+        global_pos = self.mapToGlobal(QPoint(self.width() - 10, 10))
+        
+        # Calculate the local position in the parent widget
+        local_pos = self.parent().mapFromGlobal(global_pos)
+        
+        # Position the search widget in the parent
+        search_width = min(350, self.width() // 2)
+        self.search_widget.setFixedWidth(search_width)
+        self.search_widget.setParent(self.parent())
+        self.search_widget.move(local_pos.x() - search_width, local_pos.y())
+        
+        if self.search_widget.isVisible():
+            self.search_widget.raise_()
     
     def resizeEvent(self, event):
         """Handle resize events.
@@ -225,22 +319,21 @@ class DiffTextEdit(QTextEdit):
         """
         super().resizeEvent(event)
         
+        # Update line number area
         cr = self.contentsRect()
         self.line_number_area.setGeometry(QRect(cr.left(), cr.top(), self.line_number_area_width(), cr.height()))
         
-        # Position search widget in top right
-        self.search_widget.setGeometry(
-            cr.right() - self.search_widget.sizeHint().width() - 10,
-            cr.top() + 10,
-            self.search_widget.sizeHint().width(),
-            self.search_widget.sizeHint().height()
-        )
+        # Update search widget position
+        self.position_search_widget()
     
     def toggle_search(self):
         """Toggle the visibility of the search widget."""
         if self.search_widget.isVisible():
             self.search_widget.hide_search()
         else:
+            # Update position before showing
+            self.position_search_widget()
+            self.search_widget.raise_()
             self.search_widget.show_search()
     
     def search_text(self, search_text):
@@ -393,36 +486,44 @@ class DiffTextEdit(QTextEdit):
             event: The paint event
         """
         painter = QPainter(self.line_number_area)
-        painter.fillRect(event.rect(), QColor(240, 240, 240))
+        painter.fillRect(event.rect(), QColor("#f0f0f0"))
         
-        # Get the top and bottom y-coordinates of the visible text
+        # Get visible content bounds
         contents_rect = self.viewport().contentsRect()
-        scroll_y = self.verticalScrollBar().value()
-        page_bottom = scroll_y + contents_rect.height()
+        viewport_offset = self.verticalScrollBar().value()
         
-        # Initialize font metrics for measurements
-        font_metrics = QFontMetrics(self.font())
-        line_height = font_metrics.lineSpacing()
+        # Calculate font metrics
+        fm = self.fontMetrics()
+        line_spacing = fm.lineSpacing()
         
-        # Calculate the first visible line number
-        first_visible_line = max(1, int(scroll_y / line_height) + 1)
+        # Get visible text block bounding rectangles
+        line_count = self.document().blockCount()
         
-        # Calculate how many lines can fit in the viewport
-        visible_lines = min(self.document().blockCount(), int(contents_rect.height() / line_height) + 2)
+        # Calculate how many lines are visible in the viewport
+        visible_lines_count = int(contents_rect.height() / line_spacing) + 2
         
-        # Draw line numbers
-        top = contents_rect.top() - (scroll_y % line_height)
-        for i in range(visible_lines):
+        # Calculate first visible line based on scroll position
+        first_visible_line = int(viewport_offset / line_spacing) + 1
+        
+        # Draw visible line numbers
+        for i in range(visible_lines_count):
             line_number = first_visible_line + i
-            if line_number > self.document().blockCount():
+            
+            if line_number > line_count:
                 break
                 
-            painter.setPen(QColor(120, 120, 120))
-            painter.drawText(0, top + i * line_height, 
-                            self.line_number_area.width() - 2, 
-                            line_height,
-                            Qt.AlignmentFlag.AlignRight, 
-                            str(line_number))
+            top_y = int(i * line_spacing - (viewport_offset % line_spacing))
+            
+            # Draw line number
+            painter.setPen(QColor(100, 100, 100))
+            painter.drawText(
+                0, 
+                top_y, 
+                self.line_number_area.width() - 5, 
+                line_spacing, 
+                Qt.AlignmentFlag.AlignRight, 
+                str(line_number)
+            )
     
     def highlight_text(self, diff_lines: List[Tuple[str, str]]):
         """Highlight diff text based on status (addition, deletion, modification, same).
@@ -445,8 +546,8 @@ class DiffTextEdit(QTextEdit):
             
             # Insert text with formatting
             text_cursor.insertText(line, format_text)
-            text_cursor.insertBlock()
-            
+            text_cursor.insertBlock()  # Add a line break
+        
         self.setTextCursor(text_cursor)
 
     def highlight_multi_diff(self, diff_data: List[Tuple[str, List[str], List[int]]]):
@@ -462,8 +563,6 @@ class DiffTextEdit(QTextEdit):
         text_cursor.movePosition(QTextCursor.MoveOperation.Start)
         
         # Process the diff data to implement the new highlighting logic
-        expanded_diff_data = []
-        
         for line, statuses, sources in diff_data:
             # Check if text is unchanged in all sources (no highlighting)
             if all(status == "same" for status in statuses):
@@ -531,29 +630,54 @@ class DiffTextEdit(QTextEdit):
 
 
 class TextSource:
-    """Represents a source of text for comparison."""
+    """Class to store a text source."""
     
-    def __init__(self, name: str = "", content: str = ""):
-        """Initialize a text source.
+    def __init__(self, name: str = "", content: str = "", color: QColor = None):
+        """Initialize the text source.
         
         Args:
-            name: Name or identifier for the text source
-            content: Text content to compare
+            name: Name of the source
+            content: Text content
+            color: Custom color for this source
         """
         self.name = name
         self.content = content
-        self.lines = content.splitlines() if content else []
+        self.lines = content.splitlines()  # Don't keep newlines
+        
+        # Assign default color if none provided
+        if color is None:
+            # Assign a color based on the source index (will be set later)
+            self.color = QColor(240, 240, 240)
+        else:
+            self.color = color
+    
+    def set_color(self, color: QColor):
+        """Set the color for this text source.
+        
+        Args:
+            color: New color
+        """
+        self.color = color
+    
+    def update_content(self, content: str):
+        """Update the text content.
+        
+        Args:
+            content: New text content
+        """
+        self.content = content
+        self.lines = content.splitlines()  # Don't keep newlines
 
 
 class DiffManager:
-    """Handles the diff calculations between multiple text sources."""
+    """Manager for text sources and diff operations."""
     
     def __init__(self):
         """Initialize the diff manager."""
-        self.sources: List[TextSource] = []
-        
+        self.sources = []
+    
     def add_source(self, source: TextSource) -> int:
-        """Add a text source for comparison.
+        """Add a text source.
         
         Args:
             source: The text source to add
@@ -561,6 +685,19 @@ class DiffManager:
         Returns:
             Index of the added source
         """
+        if len(self.sources) >= MAX_TEXT_SOURCES:
+            return -1
+            
+        # Set the color based on the source index
+        source_idx = len(self.sources)
+        if source_idx < len(DEFAULT_SOURCE_COLORS):
+            source.color = DEFAULT_SOURCE_COLORS[source_idx]
+            
+        # Update highlight colors map
+        if source_idx < 5:  # We only have 5 predefined source colors
+            highlight_color = source.color.lighter(130)
+            HIGHLIGHT_COLORS[f"source{source_idx + 1}"] = highlight_color
+            
         self.sources.append(source)
         return len(self.sources) - 1
     
@@ -773,14 +910,12 @@ class MultiDiffView(QWidget):
         for i, idx in enumerate(source_indices):
             if i < len(self.diff_manager.sources):
                 source_name = self.diff_manager.sources[idx].name
-                color_key = f"source{i+1}"
+                source_color = self.diff_manager.sources[idx].color
                 
                 indicator = QFrame()
                 indicator.setFrameShape(QFrame.Shape.Box)
                 indicator.setFixedSize(16, 16)
-                
-                if color_key in HIGHLIGHT_COLORS:
-                    indicator.setStyleSheet(f"background-color: {HIGHLIGHT_COLORS[color_key].name()};")
+                indicator.setStyleSheet(f"background-color: {source_color.name()};")
                 
                 source_layout.addWidget(indicator)
                 source_layout.addWidget(QLabel(f"{source_name}"))
@@ -822,22 +957,65 @@ class MultiDiffView(QWidget):
         return names
 
 
+class ColorButton(QPushButton):
+    """Custom button for color selection."""
+    
+    def __init__(self, color=QColor(255, 255, 255), parent=None):
+        """Initialize the color button.
+        
+        Args:
+            color: Initial color
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.color = color
+        self.setFixedSize(24, 24)
+        self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #888;")
+        self.clicked.connect(self.choose_color)
+    
+    def choose_color(self):
+        """Show color picker dialog and update the button color."""
+        color = QColorDialog.getColor(self.color, self.parent(), "Choose Color")
+        if color.isValid():
+            self.color = color
+            self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #888;")
+            self.color_changed.emit(self.color)
+    
+    def set_color(self, color):
+        """Set the button color.
+        
+        Args:
+            color: New color
+        """
+        self.color = color
+        self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #888;")
+    
+    # Signal for color change
+    color_changed = pyqtSignal(QColor)
+
+
 class InfiniteDifferApp(QMainWindow):
     """Main application window for InfiniteDiffer."""
     
     def __init__(self):
-        """Initialize the main application window."""
+        """Initialize the main window."""
         super().__init__()
         
-        # Set up diff manager
-        self.diff_manager = DiffManager()
-        
-        # Set up UI
-        self.init_ui()
-        
-        # Connect signal handlers for clean exit
+        # Set up signal handling
         signal.signal(signal.SIGINT, self.signal_handler)
         
+        # Initialize diff manager
+        self.diff_manager = DiffManager()
+        
+        # Initialize caching flag
+        self.caching_enabled = True
+        
+        # Initialize UI
+        self.init_ui()
+        
+        # Load cached workspace if available
+        self.load_cached_workspace()
+    
     def init_ui(self):
         """Initialize the user interface."""
         self.setWindowTitle("InfiniteDiffer")
@@ -864,8 +1042,32 @@ class InfiniteDifferApp(QMainWindow):
         
         # Add comparison actions
         compare_action = QAction("Compare Multiple", self)
-        compare_action.triggered.connect(self.create_multi_diff_tab)
+        compare_action.triggered.connect(lambda: self.create_multi_diff_tab())
         toolbar.addAction(compare_action)
+        
+        toolbar.addSeparator()
+        
+        # Add color pickers for highlight colors
+        toolbar.addWidget(QLabel("Addition: "))
+        self.addition_color_button = ColorButton(HIGHLIGHT_COLORS["addition"])
+        self.addition_color_button.color_changed.connect(self.update_addition_color)
+        toolbar.addWidget(self.addition_color_button)
+        
+        toolbar.addWidget(QLabel("Deletion: "))
+        self.deletion_color_button = ColorButton(HIGHLIGHT_COLORS["deletion"])
+        self.deletion_color_button.color_changed.connect(self.update_deletion_color)
+        toolbar.addWidget(self.deletion_color_button)
+        
+        toolbar.addSeparator()
+        
+        # Add cache toggle checkbox
+        cache_label = QLabel("Cache: ")
+        toolbar.addWidget(cache_label)
+        
+        self.cache_checkbox = QCheckBox()
+        self.cache_checkbox.setChecked(True)  # Enable caching by default
+        self.cache_checkbox.stateChanged.connect(self.toggle_caching)
+        toolbar.addWidget(self.cache_checkbox)
         
         toolbar.addSeparator()
         
@@ -882,6 +1084,7 @@ class InfiniteDifferApp(QMainWindow):
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
+        self.tabs.setMovable(True)  # Enable tab reordering
         
         # Create main splitter
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -891,6 +1094,8 @@ class InfiniteDifferApp(QMainWindow):
         self.source_panel = QTabWidget()
         self.source_panel.setTabsClosable(True)
         self.source_panel.tabCloseRequested.connect(self.remove_source)
+        self.source_panel.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.source_panel.customContextMenuRequested.connect(self.source_context_menu)
         splitter.addWidget(self.source_panel)
         
         # Set initial splitter sizes (70% top, 30% bottom)
@@ -904,6 +1109,134 @@ class InfiniteDifferApp(QMainWindow):
         self.status_bar.showMessage("Ready")
         
         self.setCentralWidget(central_widget)
+        
+        # Create the special first tab that shows all sources
+        self.all_sources_tab_index = -1  # Will be set when created
+        self.create_all_sources_tab()
+    
+    def create_all_sources_tab(self):
+        """Create a special tab that shows all text sources and updates automatically."""
+        if len(self.diff_manager.sources) < 2:
+            # Can't create multi-diff with less than 2 sources
+            return
+            
+        # Get indices of all sources
+        all_indices = list(range(len(self.diff_manager.sources)))
+        
+        # Create the tab
+        multi_diff = MultiDiffView(self.diff_manager, all_indices, self)
+        multi_diff.setProperty("is_auto_sources", True)
+        
+        # Generate tab name
+        tab_name = "All Sources"
+        
+        # If the all sources tab already exists, update it
+        if self.all_sources_tab_index >= 0 and self.all_sources_tab_index < self.tabs.count():
+            # Replace the existing tab
+            self.tabs.removeTab(self.all_sources_tab_index)
+            self.tabs.insertTab(self.all_sources_tab_index, multi_diff, tab_name)
+            self.tabs.setCurrentIndex(self.all_sources_tab_index)
+        else:
+            # Add as first tab
+            self.tabs.insertTab(0, multi_diff, tab_name)
+            self.all_sources_tab_index = 0
+            self.tabs.setCurrentIndex(0)
+    
+    def update_all_sources_tab(self):
+        """Update the all sources tab to include all current sources."""
+        # Check if we should create or update the all sources tab
+        if len(self.diff_manager.sources) >= 2:
+            if self.all_sources_tab_index >= 0:
+                # Update existing tab
+                all_indices = list(range(len(self.diff_manager.sources)))
+                tab = self.tabs.widget(self.all_sources_tab_index)
+                
+                # If this is a MultiDiffView, update it
+                if isinstance(tab, MultiDiffView) and hasattr(tab, 'source_indices'):
+                    tab.source_indices = all_indices
+                    tab.update_diff()
+                else:
+                    # Recreate the tab if it's not a proper MultiDiffView
+                    self.create_all_sources_tab()
+            else:
+                # Create new tab
+                self.create_all_sources_tab()
+        elif self.all_sources_tab_index >= 0:
+            # Remove the tab if we have fewer than 2 sources
+            self.tabs.removeTab(self.all_sources_tab_index)
+            self.all_sources_tab_index = -1
+    
+    def load_cached_workspace(self):
+        """Load cached workspace data from file."""
+        if not self.caching_enabled or not os.path.exists(CACHE_FILENAME):
+            return
+            
+        try:
+            with open(CACHE_FILENAME, 'rb') as f:
+                cache_data = pickle.load(f)
+                
+            # Restore highlight colors
+            if 'highlight_colors' in cache_data:
+                for key, value in cache_data['highlight_colors'].items():
+                    if key in HIGHLIGHT_COLORS:
+                        HIGHLIGHT_COLORS[key] = QColor(value)
+                        
+                # Update color buttons
+                if hasattr(self, 'addition_color_button'):
+                    self.addition_color_button.set_color(HIGHLIGHT_COLORS["addition"])
+                if hasattr(self, 'deletion_color_button'):
+                    self.deletion_color_button.set_color(HIGHLIGHT_COLORS["deletion"])
+                
+            # Clear existing sources before loading
+            while len(self.diff_manager.sources) > 0:
+                self.remove_source_internal(0, update_ui=False)
+            
+            # Restore text sources
+            if 'sources' in cache_data:
+                for source_data in cache_data['sources']:
+                    source = TextSource(
+                        source_data['name'], 
+                        source_data['content'],
+                        QColor(source_data['color']) if 'color' in source_data else None
+                    )
+                    self.add_source(source)
+            
+            self.statusBar().showMessage("Workspace loaded from cache", 3000)
+        except Exception as e:
+            print(f"Error loading workspace cache: {e}")
+    
+    def save_cached_workspace(self):
+        """Save workspace data to cache file."""
+        if not self.caching_enabled:
+            return
+            
+        try:
+            cache_data = {
+                'sources': [],
+                'highlight_colors': {}
+            }
+            
+            # Save highlight colors
+            for key, color in HIGHLIGHT_COLORS.items():
+                cache_data['highlight_colors'][key] = color.name()
+            
+            # Save text sources
+            for source in self.diff_manager.sources:
+                cache_data['sources'].append({
+                    'name': source.name,
+                    'content': source.content,
+                    'color': source.color.name()
+                })
+            
+            with open(CACHE_FILENAME, 'wb') as f:
+                pickle.dump(cache_data, f)
+        except Exception as e:
+            print(f"Error saving workspace cache: {e}")
+    
+    def closeEvent(self, event):
+        """Handle window close event."""
+        self.save_cached_workspace()
+        event.accept()
         
     def signal_handler(self, sig, frame):
         """Handle interrupt signals (Ctrl+C).
@@ -949,7 +1282,7 @@ class InfiniteDifferApp(QMainWindow):
             text_edit.setFocus()
             
     def add_source(self, source: TextSource) -> int:
-        """Add a text source to the application.
+        """Add a new text source.
         
         Args:
             source: The text source to add
@@ -958,45 +1291,232 @@ class InfiniteDifferApp(QMainWindow):
             Index of the added source
         """
         if len(self.diff_manager.sources) >= MAX_TEXT_SOURCES:
-            self.status_bar.showMessage(f"Maximum number of sources ({MAX_TEXT_SOURCES}) reached")
+            self.status_bar.showMessage(f"Maximum of {MAX_TEXT_SOURCES} sources reached")
             return -1
             
+        # Add to manager
         source_index = self.diff_manager.add_source(source)
         
-        # Create source view
-        text_edit = QTextEdit()
-        text_edit.setPlainText(source.content)
-        text_edit.textChanged.connect(lambda: self.update_source_content(source_index))
-        
-        # Add to source panel
-        self.source_panel.addTab(text_edit, source.name)
-        
-        # Update selectors
-        self.update_selectors()
-        
-        # If this is the second source, automatically create a diff tab
-        if len(self.diff_manager.sources) == 2:
-            self.create_diff_tab(0, 1)
+        if source_index >= 0:
+            # Create source view
+            text_edit = QTextEdit()
+            text_edit.setPlainText(source.content)
+            text_edit.textChanged.connect(lambda: self.update_source_content(source_index))
             
-        return source_index
+            # Create a colored tab for the source panel
+            self.source_panel.addTab(text_edit, source.name)
+            
+            # Set tab color in the source panel
+            self.set_tab_color(self.source_panel, self.source_panel.count() - 1, source.color)
+            
+            # Update base selector
+            self.base_selector.blockSignals(True)
+            self.base_selector.addItem(source.name, source_index)
+            self.base_selector.blockSignals(False)
+            
+            # Update selectors
+            self.update_selectors()
+            
+            # If at least 2 sources, update diffs
+            if len(self.diff_manager.sources) >= 2:
+                # Update the all sources tab
+                self.update_all_sources_tab()
+                
+                # Update other existing tabs
+                self.update_all_diff_views()
+            
+            self.status_bar.showMessage(f"Added source: {source.name}")
+            
+            # Update cache
+            self.save_cached_workspace()
         
+        return source_index
+    
+    def set_tab_color(self, tab_widget: QTabWidget, tab_index: int, color: QColor):
+        """Set the background color of a tab.
+        
+        Args:
+            tab_widget: The tab widget
+            tab_index: Index of the tab
+            color: Color to set
+        """
+        if tab_index < 0 or tab_index >= tab_widget.count():
+            return
+        
+        # Store color in tab data
+        tab_widget.tabBar().setTabData(tab_index, color)
+        
+        # Set the tab style for all tabs
+        self.update_tab_styles(tab_widget)
+    
+    def update_tab_styles(self, tab_widget):
+        """Update styles for all tabs in a tab widget.
+        
+        Args:
+            tab_widget: The tab widget to update
+        """
+        tab_bar = tab_widget.tabBar()
+        style_sheet = ""
+        
+        # Create style for each tab
+        for i in range(tab_widget.count()):
+            tab_data = tab_bar.tabData(i)
+            if tab_data and isinstance(tab_data, QColor):
+                tab_color = tab_data
+                
+                # Calculate brightness for text color
+                brightness = (tab_color.red() * 299 + tab_color.green() * 587 + tab_color.blue() * 114) / 1000
+                text_color = "black" if brightness > 128 else "white"
+                
+                # Add style for this tab
+                style_sheet += f"""
+                QTabBar::tab:!selected:nth({i}) {{
+                    background-color: {tab_color.name()};
+                    color: {text_color};
+                    border: 1px solid #555;
+                    border-bottom: none;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    padding: 3px;
+                }}
+                QTabBar::tab:selected:nth({i}) {{
+                    background-color: {tab_color.name()};
+                    color: {text_color};
+                    border: 1px solid #555;
+                    border-bottom: none;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    font-weight: bold;
+                    padding: 3px;
+                }}
+                """
+        
+        if style_sheet:
+            tab_bar.setStyleSheet(style_sheet)
+    
+    def source_context_menu(self, point):
+        """Show context menu for source tabs.
+        
+        Args:
+            point: Click position
+        """
+        # Get the tab under the point
+        tab_bar = self.source_panel.tabBar()
+        tab_index = tab_bar.tabAt(point)
+        
+        if tab_index >= 0:
+            # Create context menu
+            menu = QMenu(self)
+            
+            # Add color picker action
+            color_action = QAction("Change Color", self)
+            color_action.triggered.connect(lambda: self.change_source_color(tab_index))
+            menu.addAction(color_action)
+            
+            # Add rename action
+            rename_action = QAction("Rename", self)
+            rename_action.triggered.connect(lambda: self.rename_source(tab_index))
+            menu.addAction(rename_action)
+            
+            # Add separator
+            menu.addSeparator()
+            
+            # Add close action
+            close_action = QAction("Close", self)
+            close_action.triggered.connect(lambda: self.remove_source(tab_index))
+            menu.addAction(close_action)
+            
+            # Show menu
+            menu.exec(tab_bar.mapToGlobal(point))
+    
+    def change_source_color(self, source_index: int):
+        """Change the color of a text source.
+        
+        Args:
+            source_index: Index of the source
+        """
+        if source_index < 0 or source_index >= len(self.diff_manager.sources):
+            return
+            
+        # Get current color
+        current_color = self.diff_manager.sources[source_index].color
+        
+        # Show color picker dialog
+        color = QColorDialog.getColor(current_color, self, "Choose Source Color")
+        
+        if color.isValid():
+            # Update the source color
+            self.diff_manager.sources[source_index].color = color
+            
+            # Update highlight colors map
+            if source_index < 5:  # We only have 5 predefined source colors
+                HIGHLIGHT_COLORS[f"source{source_index + 1}"] = color.lighter(130)
+            
+            # Update the tab color
+            self.set_tab_color(self.source_panel, source_index, color)
+            
+            # Update all diff views
+            self.update_all_diff_views()
+            
+            # Update cache
+            self.save_cached_workspace()
+    
+    def rename_source(self, source_index: int):
+        """Rename a text source.
+        
+        Args:
+            source_index: Index of the source
+        """
+        if source_index < 0 or source_index >= len(self.diff_manager.sources):
+            return
+            
+        # Get current name
+        current_name = self.diff_manager.sources[source_index].name
+        
+        # Show input dialog
+        new_name, ok = QInputDialog.getText(self, "Rename Source", "Enter new name:", text=current_name)
+        
+        if ok and new_name:
+            # Update the source name
+            self.diff_manager.sources[source_index].name = new_name
+            
+            # Update tab text
+            self.source_panel.setTabText(source_index, new_name)
+            
+            # Update base selector
+            self.base_selector.setItemText(source_index, new_name)
+            
+            # Update all diff views
+            self.update_all_diff_views()
+            
+            # Update cache
+            self.save_cached_workspace()
+    
     def update_source_content(self, source_index: int):
         """Update the content of a text source when edited.
         
         Args:
             source_index: Index of the source to update
         """
-        if not (0 <= source_index < len(self.diff_manager.sources)):
+        if source_index < 0 or source_index >= len(self.diff_manager.sources):
             return
             
+        # Get the updated content from the text edit
         text_edit = self.source_panel.widget(source_index)
-        if text_edit:
-            self.diff_manager.sources[source_index].content = text_edit.toPlainText()
-            self.diff_manager.sources[source_index].lines = text_edit.toPlainText().splitlines()
+        if not text_edit:
+            return
             
+        new_content = text_edit.toPlainText()
+        
+        # Update the source
+        self.diff_manager.sources[source_index].update_content(new_content)
+        
         # Update all diff views
         self.update_all_diff_views()
         
+        # Update cache
+        self.save_cached_workspace()
+    
     def update_selectors(self):
         """Update the source selectors with current sources."""
         # Remember current selection
@@ -1049,19 +1569,27 @@ class InfiniteDifferApp(QMainWindow):
         self.tabs.addTab(container, tab_name)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
     
-    def create_multi_diff_tab(self):
-        """Create a new diff tab comparing multiple sources."""
+    def create_multi_diff_tab(self, source_indices=None):
+        """Create a new diff tab comparing multiple sources.
+        
+        Args:
+            source_indices: Optional list of source indices to use.
+                If None, a dialog will be shown to select sources.
+        """
         if len(self.diff_manager.sources) < 2:
             self.status_bar.showMessage("Need at least two sources to compare")
             return
+        
+        # If source indices not provided, show selection dialog
+        if source_indices is None:
+            # Show source selection dialog
+            dialog = SourceSelectionDialog(self.diff_manager.sources, self)
+            if dialog.exec() != QDialog.DialogCode.Accepted:
+                return
+                
+            # Get selected sources
+            source_indices = dialog.get_selected_sources()
             
-        # Show source selection dialog
-        dialog = SourceSelectionDialog(self.diff_manager.sources, self)
-        if dialog.exec() != QDialog.DialogCode.Accepted:
-            return
-            
-        # Get selected sources
-        source_indices = dialog.get_selected_sources()
         if len(source_indices) < 2:
             self.status_bar.showMessage("Need at least two sources to compare")
             return
@@ -1069,24 +1597,15 @@ class InfiniteDifferApp(QMainWindow):
         # Create multi-diff view
         multi_diff = MultiDiffView(self.diff_manager, source_indices, self)
         
-        # Create container widget and layout
-        container = QWidget()
-        layout = QVBoxLayout(container)
-        layout.addWidget(multi_diff)
-        
-        # Add tag with source indices for later reference
-        container.setProperty("source_indices", source_indices)
-        container.setProperty("is_multi_diff", True)
-        
         # Generate tab name
         source_names = multi_diff.get_source_names()
         if len(source_names) <= 3:
             tab_name = " ↔ ".join(source_names)
         else:
-            tab_name = f"{source_names[0]} ↔ ... ↔ {source_names[-1]} ({len(source_names)})"
+            tab_name = f"{source_names[0]} ↔ ... ({len(source_names)} sources)"
             
         # Add to tabs
-        self.tabs.addTab(container, tab_name)
+        self.tabs.addTab(multi_diff, tab_name)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         
     def update_diff_view(self):
@@ -1118,47 +1637,43 @@ class InfiniteDifferApp(QMainWindow):
             diff_edit.highlight_text(diff_lines)
         
     def update_all_diff_views(self):
-        """Update all diff views with current content."""
+        """Update all diff views."""
+        # First, handle the special "All Sources" tab
+        if self.all_sources_tab_index >= 0 and self.all_sources_tab_index < self.tabs.count():
+            self.update_all_sources_tab()
+        
+        # Update other tabs
         for i in range(self.tabs.count()):
+            # Skip the "All Sources" tab as it's already updated
+            if i == self.all_sources_tab_index:
+                continue
+                
             tab = self.tabs.widget(i)
-            is_multi_diff = tab.property("is_multi_diff")
             
-            if is_multi_diff:
-                # Update multi-diff view
-                multi_diff = tab.findChild(MultiDiffView)
-                if multi_diff:
-                    multi_diff.update_diff()
-                    
-                    # Update tab name if source names have changed
-                    source_names = multi_diff.get_source_names()
-                    if len(source_names) <= 3:
-                        tab_name = " ↔ ".join(source_names)
-                    else:
-                        tab_name = f"{source_names[0]} ↔ ... ↔ {source_names[-1]} ({len(source_names)})"
-                    
-                    self.tabs.setTabText(i, tab_name)
+            if isinstance(tab, MultiDiffView):
+                tab.update_diff()
             else:
-                # Update regular diff view
-                base_index = tab.property("base_index")
-                compare_index = tab.property("compare_index")
+                # For regular diff tabs
+                base_index = -1
+                compare_index = -1
                 
-                if base_index is None or compare_index is None:
-                    continue
-                    
-                diff_edit = tab.findChild(DiffTextEdit)
-                if not diff_edit:
-                    continue
-                    
-                diff_lines = self.diff_manager.get_diff(base_index, compare_index)
-                diff_edit.highlight_text(diff_lines)
+                # Try to get properties directly
+                if hasattr(tab, 'base_index') and hasattr(tab, 'compare_index'):
+                    base_index = tab.base_index
+                    compare_index = tab.compare_index
+                else:
+                    # Fallback to widget properties
+                    base_index = tab.property("base_index")
+                    compare_index = tab.property("compare_index")
                 
-                # Update tab name if source names have changed
-                if (0 <= base_index < len(self.diff_manager.sources) and 
-                    0 <= compare_index < len(self.diff_manager.sources)):
-                    base = self.diff_manager.sources[base_index]
-                    compare = self.diff_manager.sources[compare_index]
-                    tab_name = f"{base.name} ↔ {compare.name}"
-                    self.tabs.setTabText(i, tab_name)
+                if base_index >= 0 and compare_index >= 0:
+                    # Create new diff data
+                    diff_lines = self.diff_manager.get_diff(base_index, compare_index)
+                    
+                    # Update the diff view
+                    diff_edit = tab.findChild(DiffTextEdit)
+                    if diff_edit:
+                        diff_edit.highlight_text(diff_lines)
         
     def close_tab(self, index: int):
         """Close a diff tab.
@@ -1169,55 +1684,79 @@ class InfiniteDifferApp(QMainWindow):
         self.tabs.removeTab(index)
         
     def remove_source(self, index: int):
-        """Remove a text source.
+        """Remove a text source and update the UI.
         
         Args:
             index: Index of the source to remove
         """
-        if not (0 <= index < len(self.diff_manager.sources)):
+        self.remove_source_internal(index, update_ui=True)
+        
+        # Update cache
+        self.save_cached_workspace()
+    
+    def remove_source_internal(self, index: int, update_ui=True):
+        """Remove a text source with options to update the UI.
+        
+        Args:
+            index: Index of the source to remove
+            update_ui: Whether to update the UI after removing
+        """
+        if index < 0 or index >= len(self.diff_manager.sources):
             return
-            
-        # Remove source
-        self.diff_manager.remove_source(index)
-        self.source_panel.removeTab(index)
         
-        # Update selectors
-        self.update_selectors()
+        # Get the source name for messaging
+        source_name = self.diff_manager.sources[index].name
         
-        # Remove any diff tabs using this source
-        for i in range(self.tabs.count() - 1, -1, -1):
-            tab = self.tabs.widget(i)
-            is_multi_diff = tab.property("is_multi_diff")
-            
-            if is_multi_diff:
-                # Check if multi-diff uses this source
-                source_indices = tab.property("source_indices")
-                if source_indices and index in source_indices:
-                    self.tabs.removeTab(i)
-                else:
-                    # Update source indices if needed
-                    new_indices = [idx if idx < index else idx - 1 for idx in source_indices if idx != index]
-                    tab.setProperty("source_indices", new_indices)
+        # Remove from manager
+        if self.diff_manager.remove_source(index):
+            if update_ui:
+                # Remove from source panel
+                self.source_panel.removeTab(index)
+                
+                # Update base selector
+                self.base_selector.blockSignals(True)
+                for i in range(self.base_selector.count()):
+                    if self.base_selector.itemData(i) == index:
+                        self.base_selector.removeItem(i)
+                        break
+                
+                # Update indices in base selector
+                for i in range(self.base_selector.count()):
+                    idx = self.base_selector.itemData(i)
+                    if idx > index:
+                        self.base_selector.setItemData(i, idx - 1)
+                
+                self.base_selector.blockSignals(False)
+                
+                # Update selectors
+                self.update_selectors()
+                
+                # Close tabs that use this source
+                for i in range(self.tabs.count() - 1, -1, -1):
+                    tab = self.tabs.widget(i)
                     
-                    # Update the multi-diff view
-                    multi_diff = tab.findChild(MultiDiffView)
-                    if multi_diff:
-                        multi_diff.source_indices = new_indices
-                        multi_diff.update_diff()
-            else:
-                # Check regular diff
-                base_index = tab.property("base_index")
-                compare_index = tab.property("compare_index")
+                    if isinstance(tab, MultiDiffView):
+                        source_indices = tab.get_source_indices()
+                        if index in source_indices:
+                            if i == self.all_sources_tab_index:
+                                # Don't remove the all sources tab, it will be updated
+                                continue
+                            self.tabs.removeTab(i)
+                            if i < self.all_sources_tab_index:
+                                self.all_sources_tab_index -= 1
+                    elif hasattr(tab, 'base_index') and hasattr(tab, 'compare_index'):
+                        if tab.base_index == index or tab.compare_index == index:
+                            self.tabs.removeTab(i)
+                            if i < self.all_sources_tab_index:
+                                self.all_sources_tab_index -= 1
                 
-                if base_index == index or compare_index == index:
-                    self.tabs.removeTab(i)
-                elif base_index > index:
-                    tab.setProperty("base_index", base_index - 1)
-                elif compare_index > index:
-                    tab.setProperty("compare_index", compare_index - 1)
+                # Update the all sources tab
+                self.update_all_sources_tab()
                 
-        # Update all diff views
-        self.update_all_diff_views()
+                # Update other diff views
+                self.update_all_diff_views()
+                
+                self.status_bar.showMessage(f"Removed source: {source_name}")
         
     def contextMenuEvent(self, event):
         """Handle context menu events.
@@ -1249,6 +1788,44 @@ class InfiniteDifferApp(QMainWindow):
                         action.triggered.connect(lambda checked, s1=i, s2=j: self.create_diff_tab(s1, s2))
         
         context_menu.exec(event.globalPos())
+
+    def update_addition_color(self, color):
+        """Update the global highlight color for additions.
+        
+        Args:
+            color: New color
+        """
+        HIGHLIGHT_COLORS["addition"] = color
+        self.update_all_diff_views()
+        self.save_cached_workspace()
+    
+    def update_deletion_color(self, color):
+        """Update the global highlight color for deletions.
+        
+        Args:
+            color: New color
+        """
+        HIGHLIGHT_COLORS["deletion"] = color
+        self.update_all_diff_views()
+        self.save_cached_workspace()
+    
+    def toggle_caching(self, state):
+        """Toggle caching on/off.
+        
+        Args:
+            state: Checkbox state
+        """
+        self.caching_enabled = state == Qt.CheckState.Checked.value
+        
+        if self.caching_enabled:
+            self.save_cached_workspace()
+        else:
+            # Remove cache file if it exists
+            if os.path.exists(CACHE_FILENAME):
+                try:
+                    os.remove(CACHE_FILENAME)
+                except:
+                    pass
 
 
 def main():

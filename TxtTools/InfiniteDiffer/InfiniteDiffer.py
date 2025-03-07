@@ -1,10 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-InfiniteDiffer: A tool for comparing multiple text files simultaneously.
+"""InfiniteDiffer: A tool for comparing multiple text files simultaneously.
 
 This application provides a Git-like diff visualization for more than two text sources
 at the same time, highlighting additions, deletions, and modifications across files.
+
+Processing rules: (may be out of date)
+    - Text that is identical across all sources is not highlighted.
+    - Text added in all sources except the first one is highlighted with standard green.
+    - Text removed from all sources except the first one is highlighted with standard red.
+    - Text added in any specific source appears with that source's color highlighting.
+        - If text is added in multiple sources, it appears once for each source.
+        - Line numbers help distinguish between duplicate lines from different sources.
+    - Text removed from any specific source appears underlined with that source's color.
+
+Example:
+    Run the application with:
+        $ python InfiniteDiffer.py
 """
 
 import sys
@@ -20,7 +32,7 @@ from PyQt6.QtWidgets import (
     QSplitter, QTabWidget, QToolBar, QStatusBar, QComboBox, QMenu,
     QGridLayout, QFrame, QSizePolicy, QCheckBox, QDialogButtonBox,
     QDialog, QListWidget, QListWidgetItem, QLineEdit, QToolTip,
-    QColorDialog, QInputDialog
+    QColorDialog, QInputDialog, QStackedWidget
 )
 from PyQt6.QtGui import (
     QTextCharFormat, QColor, QTextCursor, QPalette, 
@@ -28,13 +40,30 @@ from PyQt6.QtGui import (
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QRect, QPoint
 
-# Configuration variables
+# * Configuration variables
 MAX_TEXT_SOURCES = 10  # Maximum number of text sources to compare
 DEFAULT_WINDOW_WIDTH = 1200
 DEFAULT_WINDOW_HEIGHT = 800
 DEFAULT_FONT_FAMILY = "Consolas"
 DEFAULT_FONT_SIZE = 10
-CACHE_FILENAME = "infinite_differ_cache.pkl"  # Filename for workspace cache
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))  # Путь к директории скрипта
+CACHE_FILENAME = os.path.join(SCRIPT_DIR, "infinite_differ_cache.pkl")  # Filename for workspace cache
+COLORS_FILENAME = os.path.join(SCRIPT_DIR, "infinite_differ_colors.json")  # Filename for color settings
+ENABLE_CACHING = False  # Whether to cache workspace state by default
+
+# Welcome text displayed when no tabs are open
+WELCOME_TEXT = """
+Welcome to InfiniteDiffer!
+
+This tool allows you to compare multiple text files simultaneously.
+
+To get started:
+1. Add files or text sources using the toolbar buttons
+2. Select sources to compare
+3. View the differences highlighted with colors
+
+Use the right-click menu for additional options.
+"""
 
 # Default source tab colors - darker pastel colors (using hex values)
 DEFAULT_SOURCE_COLORS = [
@@ -50,11 +79,12 @@ DEFAULT_SOURCE_COLORS = [
     QColor("#C8DCC8"),
 ]
 
-# Highlight colors for diff operations (using hex values)
+# * Highlight colors for diff operations
 HIGHLIGHT_COLORS = {
     "addition": QColor("#4DAF4D"),
     "deletion": QColor("#FF4D4D"),
-    "modification": QColor("#AFAFCD"),
+    "modification": QColor("#7C93C0"),  # Blue-ish for modifications
+    "moved": QColor("#DAA520"),  # Goldenrod for moved lines
     "same": QColor("#AAAAFF"),
     "source1": QColor("#E6E666"),
     "source2": QColor("#0F8666"),
@@ -505,6 +535,9 @@ class DiffTextEdit(QTextEdit):
         # Calculate first visible line based on scroll position
         first_visible_line = int(viewport_offset / line_spacing) + 1
         
+        # Get line numbers from the text's property, if available
+        line_numbers = self.property("line_numbers")
+        
         # Draw visible line numbers
         for i in range(visible_lines_count):
             line_number = first_visible_line + i
@@ -514,6 +547,15 @@ class DiffTextEdit(QTextEdit):
                 
             top_y = int(i * line_spacing - (viewport_offset % line_spacing))
             
+            # If we have custom line numbers, use them
+            if line_numbers and line_number - 1 < len(line_numbers):
+                display_number = line_numbers[line_number - 1]
+                # Don't display numbers for folded line markers
+                if display_number == -1:
+                    continue
+            else:
+                display_number = line_number
+            
             # Draw line number
             painter.setPen(QColor(100, 100, 100))
             painter.drawText(
@@ -522,11 +564,11 @@ class DiffTextEdit(QTextEdit):
                 self.line_number_area.width() - 5, 
                 line_spacing, 
                 Qt.AlignmentFlag.AlignRight, 
-                str(line_number)
+                str(display_number)
             )
     
     def highlight_text(self, diff_lines: List[Tuple[str, str]]):
-        """Highlight diff text based on status (addition, deletion, modification, same).
+        """Highlight diff text based on status (addition, deletion, modification, moved, same).
         
         Args:
             diff_lines: List of tuples containing (line_text, status)
@@ -535,7 +577,71 @@ class DiffTextEdit(QTextEdit):
         text_cursor = self.textCursor()
         text_cursor.movePosition(QTextCursor.MoveOperation.Start)
         
+        # Collect lines for folding
+        all_lines = []
         for line, status in diff_lines:
+            all_lines.append((line, status))
+        
+        # Track line numbers
+        line_numbers = []
+        current_line = 1
+        
+        # Process lines with context folding
+        i = 0
+        show_context = 2  # Show this many lines of context before and after changes
+        
+        while i < len(all_lines):
+            line, status = all_lines[i]
+            
+            # Start of folding area
+            if status == "same":
+                # Check if we have a sequence of unchanged lines
+                same_count = 0
+                for j in range(i, len(all_lines)):
+                    if all_lines[j][1] == "same":
+                        same_count += 1
+                    else:
+                        break
+                
+                # If we have more than (show_context*2 + 1) unchanged lines, fold them
+                if same_count > show_context * 2 + 1:
+                    # Show first 'show_context' unchanged lines
+                    for j in range(i, i + show_context):
+                        format_text = QTextCharFormat()
+                        if all_lines[j][1] in HIGHLIGHT_COLORS:
+                            format_text.setBackground(HIGHLIGHT_COLORS[all_lines[j][1]])
+                        format_text.setForeground(QColor(0, 0, 0))
+                        text_cursor.insertText(all_lines[j][0], format_text)
+                        text_cursor.insertBlock()
+                        line_numbers.append(current_line)
+                        current_line += 1
+                    
+                    # Insert folding indicator
+                    fold_format = QTextCharFormat()
+                    fold_format.setForeground(QColor(100, 100, 100))
+                    fold_text = f"(... {same_count - show_context * 2} unchanged lines ...)"
+                    text_cursor.insertText(fold_text, fold_format)
+                    text_cursor.insertBlock()
+                    line_numbers.append(-1)  # Special marker for folded lines
+                    
+                    # Skip the middle lines in line counting
+                    current_line += same_count - show_context * 2
+                    
+                    # Show last 'show_context' unchanged lines
+                    for j in range(i + same_count - show_context, i + same_count):
+                        format_text = QTextCharFormat()
+                        if all_lines[j][1] in HIGHLIGHT_COLORS:
+                            format_text.setBackground(HIGHLIGHT_COLORS[all_lines[j][1]])
+                        format_text.setForeground(QColor(0, 0, 0))
+                        text_cursor.insertText(all_lines[j][0], format_text)
+                        text_cursor.insertBlock()
+                        line_numbers.append(current_line)
+                        current_line += 1
+                    
+                    i += same_count
+                    continue
+            
+            # Regular formatting
             format_text = QTextCharFormat()
             
             if status in HIGHLIGHT_COLORS:
@@ -544,11 +650,31 @@ class DiffTextEdit(QTextEdit):
             # Set text color to black
             format_text.setForeground(QColor(0, 0, 0))
             
+            # Special formatting for moved lines
+            if status == "moved":
+                format_text.setFontItalic(True)
+            
+            # Special formatting for modified lines
+            if status == "modification":
+                format_text.setFontWeight(QFont.Weight.Bold)
+            
             # Insert text with formatting
             text_cursor.insertText(line, format_text)
-            text_cursor.insertBlock()  # Add a line break
+            text_cursor.insertBlock()
+            
+            # Add line number
+            line_numbers.append(current_line)
+            current_line += 1
+            
+            i += 1
+        
+        # Store line numbers as a property of the text edit
+        self.setProperty("line_numbers", line_numbers)
         
         self.setTextCursor(text_cursor)
+        
+        # Force update of line number area
+        self.update_line_number_area()
 
     def highlight_multi_diff(self, diff_data: List[Tuple[str, List[str], List[int]]]):
         """Highlight text for multi-source diff.
@@ -562,46 +688,141 @@ class DiffTextEdit(QTextEdit):
         text_cursor = self.textCursor()
         text_cursor.movePosition(QTextCursor.MoveOperation.Start)
         
-        # Process the diff data to implement the new highlighting logic
+        # Collect all lines for folding
+        all_lines = []
         for line, statuses, sources in diff_data:
+            # Check if text is unchanged in all sources
+            is_same = all(status == "same" for status in statuses)
+            all_lines.append((line, statuses, sources, is_same))
+        
+        # Track line numbers
+        line_numbers = []
+        current_line = 1
+        
+        # Process lines with context folding
+        i = 0
+        show_context = 2  # * Show this many lines of context before and after changes
+        
+        while i < len(all_lines):
+            line, statuses, sources, is_same = all_lines[i]
+            
+            # Start of folding area
+            if is_same:
+                # Check if we have a sequence of unchanged lines
+                same_count = 0
+                for j in range(i, len(all_lines)):
+                    if all_lines[j][3]:  # Check is_same flag
+                        same_count += 1
+                    else:
+                        break
+                
+                # If we have more than (show_context*2 + 1) unchanged lines, fold them
+                if same_count > show_context * 2 + 1:
+                    # Show first 'show_context' unchanged lines
+                    for j in range(i, i + show_context):
+                        format_text = QTextCharFormat()
+                        # No highlighting for unchanged text
+                        text_cursor.insertText(all_lines[j][0], format_text)
+                        text_cursor.insertBlock()
+                        line_numbers.append(current_line)
+                        current_line += 1
+                    
+                    # Insert folding indicator
+                    fold_format = QTextCharFormat()
+                    fold_format.setForeground(QColor(100, 100, 100))
+                    fold_text = f"(... {same_count - show_context * 2} unchanged lines ...)"
+                    text_cursor.insertText(fold_text, fold_format)
+                    text_cursor.insertBlock()
+                    line_numbers.append(-1)  # Special marker for folded lines
+                    
+                    # Skip the middle lines in line counting
+                    current_line += same_count - show_context * 2
+                    
+                    # Show last 'show_context' unchanged lines
+                    for j in range(i + same_count - show_context, i + same_count):
+                        format_text = QTextCharFormat()
+                        # No highlighting for unchanged text
+                        text_cursor.insertText(all_lines[j][0], format_text)
+                        text_cursor.insertBlock()
+                        line_numbers.append(current_line)
+                        current_line += 1
+                    
+                    i += same_count
+                    continue
+            
+            # Regular case - process the line according to its status
+            line, statuses, sources = all_lines[i][0], all_lines[i][1], all_lines[i][2]
+            
             # Check if text is unchanged in all sources (no highlighting)
             if all(status == "same" for status in statuses):
                 format_text = QTextCharFormat()
                 # No highlighting for unchanged text
                 text_cursor.insertText(line, format_text)
                 text_cursor.insertBlock()
+                line_numbers.append(current_line)
+                current_line += 1
+                i += 1
                 continue
-                
+            
             # Standard git diff green: added in all sources except the first
             if sources and 0 not in sources and len(sources) == len(statuses) - 1:
                 format_text = QTextCharFormat()
                 format_text.setBackground(HIGHLIGHT_COLORS["addition"])  # Standard green
                 text_cursor.insertText(line, format_text)
                 text_cursor.insertBlock()
+                line_numbers.append(current_line)
+                current_line += 1
+                i += 1
                 continue
-                
-            # Standard git diff red: removed from all sources except the first
-            if sources and len(sources) == 1 and 0 in sources and len(sources) < len(statuses):
+            
+            # Check if this is a line from the base source that is missing in some other sources
+            if 0 in sources and len(sources) < len(statuses):
+                # First show the base line as normal (not underlined)
                 format_text = QTextCharFormat()
-                format_text.setBackground(HIGHLIGHT_COLORS["deletion"])  # Standard red
                 text_cursor.insertText(line, format_text)
                 text_cursor.insertBlock()
-                continue
+                line_numbers.append(current_line)
+                current_line += 1
                 
+                # Now show which sources are missing this line
+                missing_sources = []
+                for idx in range(1, len(statuses)):  # Skip the base source
+                    if idx not in [sources.index(src) for src in sources if src != 0]:
+                        missing_sources.append(idx)
+                
+                if missing_sources:
+                    format_text = QTextCharFormat()
+                    format_text.setFontUnderline(True)
+                    
+                    # Create missing sources indicator
+                    missing_text = f"[Missing in S{', S'.join([str(s + 1) for s in missing_sources])}]"
+                    source_format = QTextCharFormat()
+                    source_format.setForeground(QColor(100, 100, 100))  # Gray text
+                    text_cursor.insertText(missing_text, source_format)
+                    
+                    # Insert the line with underline formatting
+                    text_cursor.insertText(" " + line, format_text)
+                    text_cursor.insertBlock()
+                    line_numbers.append(current_line)
+                    current_line += 1
+                
+                i += 1
+                continue
+            
             # For added/modified text in specific sources, show once per source with that source's color
             if len(sources) < len(statuses):
                 shown = False
                 
                 for src_idx in sources:
+                    # Skip the base source, we already handled it
+                    if src_idx == 0:
+                        continue
+                        
                     format_text = QTextCharFormat()
                     source_color_key = f"source{src_idx + 1}" if 0 <= src_idx < 5 else "addition"
                     
                     if source_color_key in HIGHLIGHT_COLORS:
                         format_text.setBackground(HIGHLIGHT_COLORS[source_color_key])
-                    
-                    # If text is deleted in this source, underline it
-                    if "deletion" in statuses:
-                        format_text.setFontUnderline(True)
                     
                     # Insert source indicator at the beginning
                     source_indicator = f"[S{src_idx + 1}] "
@@ -612,10 +833,13 @@ class DiffTextEdit(QTextEdit):
                     # Insert the line with appropriate formatting
                     text_cursor.insertText(line, format_text)
                     text_cursor.insertBlock()
+                    line_numbers.append(current_line)
+                    current_line += 1
                     shown = True
                 
                 # If we've shown this line for at least one source, continue to the next line
                 if shown:
+                    i += 1
                     continue
             
             # Default case: just show the line with basic formatting
@@ -625,29 +849,47 @@ class DiffTextEdit(QTextEdit):
                 format_text.setBackground(HIGHLIGHT_COLORS["addition"])
             text_cursor.insertText(line, format_text)
             text_cursor.insertBlock()
+            line_numbers.append(current_line)
+            current_line += 1
+            i += 1
+        
+        # Store line numbers as a property of the text edit
+        self.setProperty("line_numbers", line_numbers)
         
         self.setTextCursor(text_cursor)
+        
+        # Force update of line number area
+        self.update_line_number_area()
 
 
 class TextSource:
-    """Class to store a text source."""
+    """Class to store a text source.
+    
+    Represents a single text source with content, name, and color for highlighting.
+    
+    Attributes:
+        name: Display name of the text source.
+        content: String content of the text source.
+        lines: List of lines parsed from the content.
+        color: QColor assigned to this text source for highlighting.
+    """
     
     def __init__(self, name: str = "", content: str = "", color: QColor = None):
-        """Initialize the text source.
+        """Initialize a text source.
         
         Args:
-            name: Name of the source
-            content: Text content
-            color: Custom color for this source
+            name: Display name of the text source.
+            content: String content of the text source.
+            color: QColor for highlighting this source. If None, a default color is used.
         """
         self.name = name
         self.content = content
-        self.lines = content.splitlines()  # Don't keep newlines
+        # Split content into lines for diff operations
+        self.lines = content.splitlines()
         
-        # Assign default color if none provided
+        # Set default color if none provided
         if color is None:
-            # Assign a color based on the source index (will be set later)
-            self.color = QColor(240, 240, 240)
+            self.color = QColor(200, 200, 200)  # Light gray
         else:
             self.color = color
     
@@ -655,18 +897,18 @@ class TextSource:
         """Set the color for this text source.
         
         Args:
-            color: New color
+            color: New QColor for highlighting this source.
         """
         self.color = color
     
     def update_content(self, content: str):
-        """Update the text content.
+        """Update the text content of this source.
         
         Args:
-            content: New text content
+            content: New string content to set.
         """
         self.content = content
-        self.lines = content.splitlines()  # Don't keep newlines
+        self.lines = content.splitlines()
 
 
 class DiffManager:
@@ -677,13 +919,13 @@ class DiffManager:
         self.sources = []
     
     def add_source(self, source: TextSource) -> int:
-        """Add a text source.
+        """Add a text source to the manager.
         
         Args:
             source: The text source to add
             
         Returns:
-            Index of the added source
+            int: Index of the added source, or -1 if maximum sources limit reached
         """
         if len(self.sources) >= MAX_TEXT_SOURCES:
             return -1
@@ -718,13 +960,16 @@ class DiffManager:
     def get_diff(self, base_index: int, compare_index: int) -> List[Tuple[str, str]]:
         """Calculate diff between two text sources.
         
+        Uses context-aware diff algorithm to improve accuracy of matching similar lines.
+        Identifies modified lines and moved lines in addition to additions and deletions.
+        
         Args:
             base_index: Index of the base text source
             compare_index: Index of the text source to compare against
             
         Returns:
             List of (line, status) tuples where status is 'addition', 'deletion', 
-            'modification', or 'same'
+            'modification', 'moved', or 'same'
         """
         if not (0 <= base_index < len(self.sources) and 0 <= compare_index < len(self.sources)):
             return []
@@ -732,27 +977,76 @@ class DiffManager:
         base = self.sources[base_index]
         compare = self.sources[compare_index]
         
-        # Use Python's difflib to calculate diff
-        differ = difflib.Differ()
-        diff = list(differ.compare(base.lines, compare.lines))
+        # Use SequenceMatcher for better context awareness
+        matcher = difflib.SequenceMatcher(None, base.lines, compare.lines)
+        
+        # Get opcodes for detailed diff information
+        opcodes = matcher.get_opcodes()
+        
         result = []
         
-        for line in diff:
-            if line.startswith('+ '):
-                result.append((line[2:], "addition"))
-            elif line.startswith('- '):
-                result.append((line[2:], "deletion"))
-            elif line.startswith('? '):
-                # Skip diff control lines
-                continue
-            else:
-                # Line starting with '  ' is unchanged
-                result.append((line[2:], "same"))
-                
+        # Process opcodes (format: 'tag', i1, i2, j1, j2)
+        # tag can be: 'replace', 'delete', 'insert', 'equal'
+        for tag, base_start, base_end, compare_start, compare_end in opcodes:
+            if tag == 'equal':
+                # Unchanged lines
+                for i in range(base_start, base_end):
+                    result.append((base.lines[i], "same"))
+            elif tag == 'replace':
+                # This indicates modified lines
+                # To better handle this, we'll try to match lines that are similar
+                if base_end - base_start == compare_end - compare_start:
+                    # Same number of lines, likely modifications
+                    for i in range(base_end - base_start):
+                        base_line = base.lines[base_start + i]
+                        compare_line = compare.lines[compare_start + i]
+                        # Calculate similarity ratio
+                        line_matcher = difflib.SequenceMatcher(None, base_line, compare_line)
+                        similarity = line_matcher.ratio()
+                        
+                        if similarity > 0.5:  # More than 50% similar
+                            result.append((f"{base_line} → {compare_line}", "modification"))
+                        else:
+                            # If lines are too different, treat as deletion and addition
+                            result.append((base_line, "deletion"))
+                            result.append((compare_line, "addition"))
+                else:
+                    # Different number of lines
+                    # Handle as separate deletion and addition
+                    for i in range(base_start, base_end):
+                        result.append((base.lines[i], "deletion"))
+                    for i in range(compare_start, compare_end):
+                        result.append((compare.lines[i], "addition"))
+            elif tag == 'delete':
+                # Check if these lines appear elsewhere (moved)
+                for i in range(base_start, base_end):
+                    base_line = base.lines[i]
+                    # Check if this line appears anywhere in compare text
+                    if base_line in compare.lines:
+                        # It's moved, not deleted
+                        result.append((base_line, "moved"))
+                    else:
+                        # Truly deleted
+                        result.append((base_line, "deletion"))
+            elif tag == 'insert':
+                # Check if these lines appear elsewhere (moved)
+                for i in range(compare_start, compare_end):
+                    compare_line = compare.lines[i]
+                    # Check if this line appears anywhere in base text
+                    if compare_line in base.lines:
+                        # It's moved, not added
+                        # We skip it here because it was already marked as "moved" in the delete section
+                        pass
+                    else:
+                        # Truly added
+                        result.append((compare_line, "addition"))
+        
         return result
     
     def get_multi_diff(self, source_indices: List[int]) -> List[Tuple[str, List[str], List[int]]]:
         """Calculate diff between multiple text sources.
+        
+        Uses context-aware diff algorithm to improve accuracy of matching similar lines.
         
         Args:
             source_indices: List of indices of text sources to compare
@@ -770,62 +1064,90 @@ class DiffManager:
             if not (0 <= idx < len(self.sources)):
                 return []
         
-        # Get all unique lines from all sources
-        all_lines = set()
-        for idx in source_indices:
-            all_lines.update(self.sources[idx].lines)
-        
-        # Create a mapping of each line to the sources it appears in
-        line_sources = {}
-        for line in all_lines:
-            line_sources[line] = []
-            for i, idx in enumerate(source_indices):
-                if line in self.sources[idx].lines:
-                    line_sources[line].append(i)
-        
-        # Create a set of all lines for each source
-        source_lines = []
-        for idx in source_indices:
-            source_lines.append(set(self.sources[idx].lines))
-        
-        # Calculate multi-diff
-        result = []
-        
-        # First, add lines from the base source
+        # Get the base source (first in the list)
         base_idx = source_indices[0]
         base_lines = self.sources[base_idx].lines
         
-        # Sort lines based on their order in the base source, then add other unique lines
-        sorted_lines = list(base_lines)
+        # Initialize result structure
+        result = []
         
-        # Add lines that don't appear in the base source
-        # This is a simple approach; for more complex diffs we'd need a more sophisticated algorithm
-        for line in all_lines:
-            if line not in sorted_lines:
-                sorted_lines.append(line)
+        # Maps to track line statuses and presence
+        line_statuses = {line: [0] * len(source_indices) for line in base_lines}
+        for i, line in enumerate(base_lines):
+            line_statuses[line][0] = 1  # Mark as present in base source
         
-        # Generate the diff data
-        for line in sorted_lines:
-            sources_with_line = line_sources.get(line, [])
+        # Process each non-base source against the base
+        for i, idx in enumerate(source_indices[1:], 1):
+            compare_lines = self.sources[idx].lines
             
-            statuses = []
-            for i in range(len(source_indices)):
-                if i in sources_with_line:
-                    if len(sources_with_line) == len(source_indices):
-                        # Line is in all sources
-                        statuses.append("same")
-                    else:
-                        # Line is in some but not all sources
-                        statuses.append("addition")
+            # Use SequenceMatcher for context-aware matching
+            matcher = difflib.SequenceMatcher(None, base_lines, compare_lines)
+            
+            # Process matching blocks
+            for base_start, compare_start, size in matcher.get_matching_blocks():
+                # Skip the sentinel block (0, 0, 0) at the end
+                if size == 0:
+                    continue
+                    
+                # Mark matched lines as present in current source
+                for j in range(size):
+                    base_line = base_lines[base_start + j]
+                    line_statuses[base_line][i] = 1
+            
+            # Add lines unique to this source
+            for j, line in enumerate(compare_lines):
+                if line not in line_statuses:
+                    # This line is not in the base, create a new entry
+                    statuses = [0] * len(source_indices)
+                    statuses[i] = 1
+                    line_statuses[line] = statuses
+        
+        # Convert line_statuses to the expected result format
+        for line, statuses in line_statuses.items():
+            status_texts = []
+            source_indices_with_line = []
+            
+            for i, present in enumerate(statuses):
+                if present:
+                    status_texts.append("same" if sum(statuses) == len(source_indices) else "addition")
+                    source_indices_with_line.append(source_indices[i])
                 else:
-                    # Line is not in this source
-                    statuses.append("deletion")
+                    status_texts.append("deletion")
             
-            # Convert source indices from local (0-based within source_indices) 
-            # to global (indices in source_indices)
-            global_sources = [source_indices[i] for i in sources_with_line]
+            result.append((line, status_texts, source_indices_with_line))
+        
+        # Now add lines that only exist in non-base sources
+        # This preserves the context structure better than the previous implementation
+        for i, idx in enumerate(source_indices[1:], 1):
+            compare_lines = self.sources[idx].lines
             
-            result.append((line, statuses, global_sources))
+            for line in compare_lines:
+                # Skip lines already processed from base source
+                if line in line_statuses:
+                    continue
+                    
+                # Create status entry for this unique line
+                statuses = ["deletion"] * len(source_indices)
+                statuses[i] = "addition"
+                
+                # Add to results with correct source index
+                result.append((line, statuses, [source_indices[i]]))
+        
+        # Sort the result by the order of lines in the base source
+        # This improves readability of the diff
+        base_line_order = {line: i for i, line in enumerate(base_lines)}
+        
+        # Custom sort function that prioritizes base lines order
+        def sort_key(item):
+            line = item[0]
+            sources = item[2]
+            # Lines in base source are sorted by their original order
+            if 0 in [source_indices.index(src) for src in sources if src in source_indices]:
+                return (0, base_line_order.get(line, len(base_lines)))
+            # Lines not in base are sorted after all base lines
+            return (1, 0)
+            
+        result.sort(key=sort_key)
         
         return result
 
@@ -975,7 +1297,7 @@ class ColorButton(QPushButton):
     
     def choose_color(self):
         """Show color picker dialog and update the button color."""
-        color = QColorDialog.getColor(self.color, self.parent(), "Choose Color")
+        color = QColorDialog.getColor(self.color, self, "Choose Color")
         if color.isValid():
             self.color = color
             self.setStyleSheet(f"background-color: {color.name()}; border: 1px solid #888;")
@@ -994,6 +1316,30 @@ class ColorButton(QPushButton):
     color_changed = pyqtSignal(QColor)
 
 
+class WelcomeWidget(QWidget):
+    """Widget for displaying welcome message when no tabs are open."""
+    
+    def __init__(self, parent=None):
+        """Initialize the welcome widget.
+        
+        Args:
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        
+        # Create a rich text display for the welcome message
+        welcome_label = QTextEdit()
+        welcome_label.setReadOnly(True)
+        welcome_label.setStyleSheet("background-color: transparent; border: none;")
+        welcome_label.setHtml(f"<div style='text-align: center; font-size: 14pt;'>{WELCOME_TEXT.replace(chr(10), '<br>')}</div>")
+        
+        layout.addWidget(welcome_label)
+        layout.addStretch()
+
+
 class InfiniteDifferApp(QMainWindow):
     """Main application window for InfiniteDiffer."""
     
@@ -1008,7 +1354,7 @@ class InfiniteDifferApp(QMainWindow):
         self.diff_manager = DiffManager()
         
         # Initialize caching flag
-        self.caching_enabled = True
+        self.caching_enabled = ENABLE_CACHING
         
         # Initialize UI
         self.init_ui()
@@ -1047,31 +1393,31 @@ class InfiniteDifferApp(QMainWindow):
         
         toolbar.addSeparator()
         
-        # Add color pickers for highlight colors
-        toolbar.addWidget(QLabel("Addition: "))
-        self.addition_color_button = ColorButton(HIGHLIGHT_COLORS["addition"])
-        self.addition_color_button.color_changed.connect(self.update_addition_color)
-        toolbar.addWidget(self.addition_color_button)
-        
-        toolbar.addWidget(QLabel("Deletion: "))
-        self.deletion_color_button = ColorButton(HIGHLIGHT_COLORS["deletion"])
-        self.deletion_color_button.color_changed.connect(self.update_deletion_color)
-        toolbar.addWidget(self.deletion_color_button)
-        
-        toolbar.addSeparator()
-        
         # Add cache toggle checkbox
-        cache_label = QLabel("Cache: ")
+        cache_label = QLabel("Cache Text: ")
         toolbar.addWidget(cache_label)
         
         self.cache_checkbox = QCheckBox()
-        self.cache_checkbox.setChecked(True)  # Enable caching by default
+        self.cache_checkbox.setChecked(ENABLE_CACHING)  # Use global setting
         self.cache_checkbox.stateChanged.connect(self.toggle_caching)
         toolbar.addWidget(self.cache_checkbox)
         
         toolbar.addSeparator()
         
-        # Comparison source selector
+        # Add color configuration
+        self.addition_color_button = ColorButton(HIGHLIGHT_COLORS["addition"])
+        self.addition_color_button.color_changed.connect(self.update_addition_color)
+        toolbar.addWidget(QLabel("Addition: "))
+        toolbar.addWidget(self.addition_color_button)
+        
+        self.deletion_color_button = ColorButton(HIGHLIGHT_COLORS["deletion"])
+        self.deletion_color_button.color_changed.connect(self.update_deletion_color)
+        toolbar.addWidget(QLabel("Deletion: "))
+        toolbar.addWidget(self.deletion_color_button)
+        
+        toolbar.addSeparator()
+        
+        # Base selector
         self.base_selector = QComboBox()
         self.base_selector.setMinimumWidth(150)
         self.base_selector.currentIndexChanged.connect(self.update_diff_view)
@@ -1086,9 +1432,20 @@ class InfiniteDifferApp(QMainWindow):
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.setMovable(True)  # Enable tab reordering
         
+        # Create welcome widget
+        self.welcome_widget = WelcomeWidget()
+        
+        # Create stack widget to show either tabs or welcome widget
+        self.stack = QStackedWidget()
+        self.stack.addWidget(self.welcome_widget)  # Index 0: Welcome widget
+        self.stack.addWidget(self.tabs)           # Index 1: Tabs widget
+        
+        # Show welcome widget by default
+        self.stack.setCurrentIndex(0)
+        
         # Create main splitter
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.tabs)
+        splitter.addWidget(self.stack)
         
         # Add source views panel at the bottom
         self.source_panel = QTabWidget()
@@ -1141,6 +1498,9 @@ class InfiniteDifferApp(QMainWindow):
             self.tabs.insertTab(0, multi_diff, tab_name)
             self.all_sources_tab_index = 0
             self.tabs.setCurrentIndex(0)
+        
+        # Make sure tabs are shown instead of welcome widget
+        self.stack.setCurrentIndex(1)
     
     def update_all_sources_tab(self):
         """Update the all sources tab to include all current sources."""
@@ -1165,28 +1525,28 @@ class InfiniteDifferApp(QMainWindow):
             # Remove the tab if we have fewer than 2 sources
             self.tabs.removeTab(self.all_sources_tab_index)
             self.all_sources_tab_index = -1
+        
+        # Make sure tabs are shown instead of welcome widget
+        self.stack.setCurrentIndex(1)
     
     def load_cached_workspace(self):
         """Load cached workspace data from file."""
+        # Always load color settings
+        self.load_color_settings()
+        
         if not self.caching_enabled or not os.path.exists(CACHE_FILENAME):
             return
             
         try:
             with open(CACHE_FILENAME, 'rb') as f:
                 cache_data = pickle.load(f)
-                
-            # Restore highlight colors
-            if 'highlight_colors' in cache_data:
-                for key, value in cache_data['highlight_colors'].items():
-                    if key in HIGHLIGHT_COLORS:
-                        HIGHLIGHT_COLORS[key] = QColor(value)
-                        
-                # Update color buttons
-                if hasattr(self, 'addition_color_button'):
-                    self.addition_color_button.set_color(HIGHLIGHT_COLORS["addition"])
-                if hasattr(self, 'deletion_color_button'):
-                    self.deletion_color_button.set_color(HIGHLIGHT_COLORS["deletion"])
-                
+            
+            # Restore window position and size if available
+            if 'window_geometry' in cache_data:
+                geometry = cache_data['window_geometry']
+                if len(geometry) == 4:  # x, y, width, height
+                    self.setGeometry(*geometry)
+            
             # Clear existing sources before loading
             while len(self.diff_manager.sources) > 0:
                 self.remove_source_internal(0, update_ui=False)
@@ -1205,20 +1565,41 @@ class InfiniteDifferApp(QMainWindow):
         except Exception as e:
             print(f"Error loading workspace cache: {e}")
     
+    def load_color_settings(self):
+        """Load color settings from file."""
+        if not os.path.exists(COLORS_FILENAME):
+            return
+            
+        try:
+            with open(COLORS_FILENAME, 'r') as f:
+                color_data = json.load(f)
+                
+            # * Restore highlight colors
+            for key, value in color_data.items():
+                if key in HIGHLIGHT_COLORS:
+                    HIGHLIGHT_COLORS[key] = QColor(value)
+                    
+            # Update color buttons
+            if hasattr(self, 'addition_color_button'):
+                self.addition_color_button.set_color(HIGHLIGHT_COLORS["addition"])
+            if hasattr(self, 'deletion_color_button'):
+                self.deletion_color_button.set_color(HIGHLIGHT_COLORS["deletion"])
+        except Exception as e:
+            print(f"Error loading color settings: {e}")
+    
     def save_cached_workspace(self):
         """Save workspace data to cache file."""
+        # Always save color settings
+        self.save_color_settings()
+        
         if not self.caching_enabled:
             return
             
         try:
             cache_data = {
                 'sources': [],
-                'highlight_colors': {}
+                'window_geometry': [self.x(), self.y(), self.width(), self.height()]
             }
-            
-            # Save highlight colors
-            for key, color in HIGHLIGHT_COLORS.items():
-                cache_data['highlight_colors'][key] = color.name()
             
             # Save text sources
             for source in self.diff_manager.sources:
@@ -1233,6 +1614,20 @@ class InfiniteDifferApp(QMainWindow):
         except Exception as e:
             print(f"Error saving workspace cache: {e}")
     
+    def save_color_settings(self):
+        """Save color settings to file."""
+        try:
+            color_data = {}
+            
+            # Save highlight colors
+            for key, color in HIGHLIGHT_COLORS.items():
+                color_data[key] = color.name()
+            
+            with open(COLORS_FILENAME, 'w') as f:
+                json.dump(color_data, f, indent=2)
+        except Exception as e:
+            print(f"Error saving color settings: {e}")
+    
     def closeEvent(self, event):
         """Handle window close event."""
         self.save_cached_workspace()
@@ -1241,11 +1636,15 @@ class InfiniteDifferApp(QMainWindow):
     def signal_handler(self, sig, frame):
         """Handle interrupt signals (Ctrl+C).
         
+        Saves the current workspace and exits the application cleanly.
+        
         Args:
             sig: Signal number
             frame: Current stack frame
         """
-        print("\nExiting application...")
+        print("\nReceived interrupt signal. Saving workspace and exiting...")
+        self.save_color_settings()  # * Always save color settings
+        self.save_cached_workspace()
         QApplication.quit()
         
     def add_file(self):
@@ -1311,7 +1710,8 @@ class InfiniteDifferApp(QMainWindow):
             
             # Update base selector
             self.base_selector.blockSignals(True)
-            self.base_selector.addItem(source.name, source_index)
+            self.base_selector.addItem(source.name)
+            self.base_selector.setItemData(self.base_selector.count() - 1, source_index)
             self.base_selector.blockSignals(False)
             
             # Update selectors
@@ -1324,6 +1724,9 @@ class InfiniteDifferApp(QMainWindow):
                 
                 # Update other existing tabs
                 self.update_all_diff_views()
+                
+                # Make sure tabs are shown instead of welcome widget
+                self.stack.setCurrentIndex(1)
             
             self.status_bar.showMessage(f"Added source: {source.name}")
             
@@ -1524,15 +1927,16 @@ class InfiniteDifferApp(QMainWindow):
         
         # Update base selector
         self.base_selector.clear()
-        for source in self.diff_manager.sources:
+        for i, source in enumerate(self.diff_manager.sources):
             self.base_selector.addItem(source.name)
+            self.base_selector.setItemData(self.base_selector.count() - 1, i)
             
         # Restore selection if possible
         if current_base >= 0 and current_base < self.base_selector.count():
             self.base_selector.setCurrentIndex(current_base)
         elif self.base_selector.count() > 0:
             self.base_selector.setCurrentIndex(0)
-            
+    
     def create_diff_tab(self, base_index: int, compare_index: int):
         """Create a new diff tab comparing two sources.
         
@@ -1568,6 +1972,9 @@ class InfiniteDifferApp(QMainWindow):
         tab_name = f"{base.name} ↔ {compare.name}"
         self.tabs.addTab(container, tab_name)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
+        
+        # Make sure tabs are shown instead of welcome widget
+        self.stack.setCurrentIndex(1)
     
     def create_multi_diff_tab(self, source_indices=None):
         """Create a new diff tab comparing multiple sources.
@@ -1608,6 +2015,9 @@ class InfiniteDifferApp(QMainWindow):
         self.tabs.addTab(multi_diff, tab_name)
         self.tabs.setCurrentIndex(self.tabs.count() - 1)
         
+        # Make sure tabs are shown instead of welcome widget
+        self.stack.setCurrentIndex(1)
+    
     def update_diff_view(self):
         """Update the current diff view."""
         current_tab = self.tabs.currentWidget()
@@ -1683,6 +2093,13 @@ class InfiniteDifferApp(QMainWindow):
         """
         self.tabs.removeTab(index)
         
+        # If no tabs left, show welcome widget
+        if self.tabs.count() == 0:
+            self.stack.setCurrentIndex(0)
+        
+        # Update cache when tab is closed
+        self.save_cached_workspace()
+        
     def remove_source(self, index: int):
         """Remove a text source and update the UI.
         
@@ -1719,14 +2136,6 @@ class InfiniteDifferApp(QMainWindow):
                     if self.base_selector.itemData(i) == index:
                         self.base_selector.removeItem(i)
                         break
-                
-                # Update indices in base selector
-                for i in range(self.base_selector.count()):
-                    idx = self.base_selector.itemData(i)
-                    if idx > index:
-                        self.base_selector.setItemData(i, idx - 1)
-                
-                self.base_selector.blockSignals(False)
                 
                 # Update selectors
                 self.update_selectors()
@@ -1797,7 +2206,7 @@ class InfiniteDifferApp(QMainWindow):
         """
         HIGHLIGHT_COLORS["addition"] = color
         self.update_all_diff_views()
-        self.save_cached_workspace()
+        self.save_color_settings()
     
     def update_deletion_color(self, color):
         """Update the global highlight color for deletions.
@@ -1807,7 +2216,7 @@ class InfiniteDifferApp(QMainWindow):
         """
         HIGHLIGHT_COLORS["deletion"] = color
         self.update_all_diff_views()
-        self.save_cached_workspace()
+        self.save_color_settings()
     
     def toggle_caching(self, state):
         """Toggle caching on/off.
@@ -1820,33 +2229,49 @@ class InfiniteDifferApp(QMainWindow):
         if self.caching_enabled:
             self.save_cached_workspace()
         else:
-            # Remove cache file if it exists
+            # ! Remove cache file if it exists
             if os.path.exists(CACHE_FILENAME):
                 try:
                     os.remove(CACHE_FILENAME)
                 except:
                     pass
+            
+            # * Still save color settings
+            self.save_color_settings()
 
 
 def main():
-    """Main entry point for the application."""
+    """Main entry point for the application.
+    
+    Initializes the application, sets up signal handling, and starts the event loop.
+    Ensures proper cleanup on application exit.
+    
+    Returns:
+        int: Application exit code.
+    """
     # Create application
     app = QApplication(sys.argv)
     
     # Set application style
     app.setStyle("Fusion")
     
-    # Create and show main window
+    # Create main window
     window = InfiniteDifferApp()
     window.show()
     
-    # Start event loop
+    # Set up signal handler for clean termination
+    # Note: This is handled in InfiniteDifferApp.__init__
+    
+    # Start the event loop
     try:
-        sys.exit(app.exec())
+        return app.exec()
     except KeyboardInterrupt:
-        print("\nExiting application...")
-        sys.exit(0)
+        # Handle Ctrl+C gracefully
+        print("\nExiting due to keyboard interrupt...")
+        window.save_color_settings()  # Always save color settings
+        window.save_cached_workspace()
+        return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

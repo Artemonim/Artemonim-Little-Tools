@@ -2,7 +2,7 @@
 
 [Описания и инструкция на русском...](Docs/ПРОЧТИМЕНЯ.MD)
 
-A collection of small utility tools created for personal commercial and non-commercial needs. These tools aim to solve specific problems efficiently and can be used across different environments.
+A collection of small utility tools created for [personal commercial and non-commercial needs](/LICENSE). These tools aim to solve specific problems efficiently and can be used across different environments.
 
 ## Text Tools
 

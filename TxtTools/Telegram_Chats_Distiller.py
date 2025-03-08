@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""Telegram Chats Distiller
+
+This script processes Telegram chat export JSON files by extracting and transforming messages.
+It extracts text from the "text_entities" field in each message and writes a new JSON file with the transformed data.
+The script gracefully handles keyboard interrupt signals (Ctrl+C).
+
+Usage:
+    python3 Telegram_Chats_Distiller.py --input <input_file> [--output <output_file>]
+
+Args:
+    -i, --input  : Path to the input Telegram chat export JSON file (required).
+    -o, --output : Path to save the processed JSON file (optional).
+"""
 import argparse
 import json
 import os

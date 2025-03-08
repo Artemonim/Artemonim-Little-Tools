@@ -25,42 +25,28 @@ Examples:
 """
 import os
 import asyncio
-import signal
-import json
-import platform
 import time
 import argparse
 from collections import defaultdict
 from pathlib import Path
 
+# Import common utilities
+from ffmpeg_utils import (
+    print_separator, print_file_info, print_final_stats,
+    get_audio_tracks, build_loudnorm_filter_complex, get_metadata_options,
+    get_max_workers, setup_signal_handlers, create_output_dir,
+    DEFAULT_THREAD_LIMIT, DEFAULT_TARGET_LOUDNESS, DEFAULT_TRUE_PEAK, DEFAULT_LOUDNESS_RANGE
+)
+
 # Configuration variables
 INPUT_PRIMARY = None  # Primary input (audio/subtitles)
 INPUT_VIDEO = None    # Video source
 OUTPUT_FOLDER = "./normalized"
-MANUAL_THREAD_LIMIT = 2
-AUTO_THREAD_LIMIT_DIVIDER = 3
+MANUAL_THREAD_LIMIT = DEFAULT_THREAD_LIMIT
 OVERWRITE_OUTPUT = False
-MAX_WORKERS = max((os.cpu_count() or MANUAL_THREAD_LIMIT) // AUTO_THREAD_LIMIT_DIVIDER, MANUAL_THREAD_LIMIT)
+MAX_WORKERS = get_max_workers(MANUAL_THREAD_LIMIT)
 stats = defaultdict(int)
 start_time = time.monotonic()
-
-def print_separator():
-    print("\n" + "═" * 50 + "\n")
-
-def print_file_info(filename, current, total):
-    print(f"Обработка файла [{current}/{total}]: {filename}")
-    print(f"Осталось задач: {total - current}")
-
-def print_final_stats():
-    duration = time.monotonic() - start_time
-    print_separator()
-    print("ИТОГОВАЯ СТАТИСТИКА:")
-    print(f"Всего файлов: {stats['total']}")
-    print(f"Успешно обработано: {stats['processed']}")
-    print(f"Пропущено: {stats['skipped']}")
-    print(f"Ошибок: {stats['errors']}")
-    print(f"Затраченное время: {duration:.2f} секунд")
-    print_separator()
 
 def parse_arguments():
     parser = argparse.ArgumentParser(
@@ -79,7 +65,64 @@ def parse_arguments():
                         help="Overwrite existing output files")
     parser.add_argument("--crf", type=int, default=22,
                         help="HEVC CRF value (lower = better quality, default: 22)")
+    parser.add_argument("--target-loudness", type=float, default=DEFAULT_TARGET_LOUDNESS,
+                        help=f"Target integrated loudness level in LUFS (default: {DEFAULT_TARGET_LOUDNESS})")
+    parser.add_argument("--true-peak", type=float, default=DEFAULT_TRUE_PEAK,
+                        help=f"Maximum true peak level in dBTP (default: {DEFAULT_TRUE_PEAK})")
+    parser.add_argument("--loudness-range", type=float, default=DEFAULT_LOUDNESS_RANGE,
+                        help=f"Target loudness range in LU (default: {DEFAULT_LOUDNESS_RANGE})")
     return parser.parse_args()
+
+async def replace_video_only(primary_path, video_path, output_path, crf):
+    """
+    Replace video stream without audio normalization.
+    
+    Args:
+        primary_path: Path to primary input file (audio source)
+        video_path: Path to video input file
+        output_path: Path for output file
+        crf: Constant Rate Factor for video encoding
+    """
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y" if OVERWRITE_OUTPUT else "",
+        "-i", str(primary_path),
+        "-i", str(video_path),
+        "-map", "0:v? -flags +bitexact",  # Explicitly exclude primary video
+        "-map", "1:v",                   # Use video from secondary input
+        "-map", "0:a",                   # All audio tracks
+        "-map", "0:s?",                  # All subtitles
+        "-c:v", "libx265",
+        "-x265-params",
+        "qpstep=1:rect=1:hexagon=1:aq-mode=3:aq-strength=1.2:psy-rd=2.0:psy-trellis=2",
+        "-crf", str(crf),
+        "-preset", "medium",
+        "-tag:v", "hvc1",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "copy",
+        "-c:s", "copy",
+        "-movflags", "+faststart",
+        str(output_path)
+    ]
+    
+    # Filter empty strings from command
+    ffmpeg_cmd = [arg for arg in ffmpeg_cmd if arg]
+    
+    print("Запуск копирования видео:")
+    print(" ".join(ffmpeg_cmd))
+    
+    proc = await asyncio.create_subprocess_exec(
+        *ffmpeg_cmd,
+        stderr=asyncio.subprocess.PIPE
+    )
+    await proc.communicate()
+    
+    if proc.returncode == 0:
+        stats['processed'] += 1
+        print("Копирование завершено успешно")
+    else:
+        stats['errors'] += 1
+        print(f"Ошибка копирования видео")
 
 async def process_files(args):
     global MAX_WORKERS, OVERWRITE_OUTPUT, stats
@@ -87,7 +130,7 @@ async def process_files(args):
     MAX_WORKERS = args.threads or MAX_WORKERS
     OUTPUT_FOLDER = args.output or "./normalized"
     
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    await create_output_dir(OUTPUT_FOLDER)
     
     # Prepare input paths
     primary_path = Path(args.input_primary).resolve()
@@ -107,22 +150,7 @@ async def process_files(args):
     
     try:
         # Get audio track info from primary source
-        ffprobe_cmd = [
-            "ffprobe", "-v", "error", "-select_streams", "a",
-            "-show_entries", "stream=index:stream_tags=title",
-            "-print_format", "json", str(primary_path)
-        ]
-        ffprobe_proc = await asyncio.create_subprocess_exec(
-            *ffprobe_cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        stdout, stderr = await ffprobe_proc.communicate()
-        if ffprobe_proc.returncode != 0:
-            raise RuntimeError(f"FFprobe error: {stderr.decode()}")
-        
-        audio_info = json.loads(stdout.decode())
-        audio_tracks = audio_info.get('streams', [])
+        audio_tracks = await get_audio_tracks(primary_path)
         
         if not audio_tracks:
             print("Нет аудиодорожек, копирование...")
@@ -131,17 +159,20 @@ async def process_files(args):
             return
         
         # Build filter_complex for audio normalization
-        I = -16.0  # Target loudness
-        filter_complex = "".join(
-            f"[0:a:{i}]loudnorm=I={I}:TP=-1.5:LRA=11[a{i}];" for i in range(len(audio_tracks))
-        ).rstrip(';')
+        loudness_params = {
+            "target_loudness": args.target_loudness,
+            "true_peak": args.true_peak,
+            "loudness_range": args.loudness_range
+        }
+        filter_complex = build_loudnorm_filter_complex(
+            audio_tracks, 
+            target_loudness=loudness_params["target_loudness"],
+            true_peak=loudness_params["true_peak"], 
+            loudness_range=loudness_params["loudness_range"]
+        )
         
         # Prepare metadata options
-        metadata_options = []
-        for i, track in enumerate(audio_tracks):
-            title = track.get('tags', {}).get('title', '')
-            if title:
-                metadata_options.extend([f"-metadata:s:a:{i}", f"title={title}"])
+        metadata_options = get_metadata_options(audio_tracks)
         
         # Build FFmpeg command
         ffmpeg_cmd = [
@@ -178,7 +209,9 @@ async def process_files(args):
         
         # Execute command
         print("Запуск кодирования:")
-        print(" ".join([arg for arg in ffmpeg_cmd if arg]))  # Filter out empty strings
+        # Filter out empty strings
+        ffmpeg_cmd = [arg for arg in ffmpeg_cmd if arg]
+        print(" ".join(ffmpeg_cmd))
         
         proc = await asyncio.create_subprocess_exec(
             *ffmpeg_cmd,
@@ -191,7 +224,7 @@ async def process_files(args):
             print("Обработка завершена успешно")
         else:
             stats['errors'] += 1
-            print(f"Ошибка кодирования: {proc.stderr.read().decode()}")
+            print(f"Ошибка кодирования")
     
     except Exception as e:
         stats['errors'] += 1
@@ -203,12 +236,26 @@ async def main():
     global stats
     args = parse_arguments()
     
-    await process_files(args)
-    print_final_stats()
+    # Setup signal handling
+    loop = asyncio.get_running_loop()
+    stop_event = asyncio.Event()
+    task = asyncio.create_task(process_files(args))
+    tasks = [task]
+    
+    cleanup_signals = setup_signal_handlers(loop, stop_event, tasks)
+    
+    try:
+        await task
+    except asyncio.CancelledError:
+        print("\nЗадача отменена")
+    finally:
+        cleanup_signals()
+    
+    print_final_stats(stats, start_time)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nПрограмма остановлена пользователем.")
-        print_final_stats()
+        print_final_stats(stats, start_time)

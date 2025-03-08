@@ -35,13 +35,18 @@ Examples:
 
 import os
 import asyncio
-import signal
-import json
-import platform
 import time
 import argparse
 from collections import defaultdict
 from pathlib import Path
+
+# Import common utilities
+from ffmpeg_utils import (
+    print_separator, print_file_info, print_final_stats,
+    get_audio_tracks, build_loudnorm_filter_complex, get_metadata_options,
+    get_max_workers, setup_signal_handlers, create_output_dir,
+    DEFAULT_THREAD_LIMIT, DEFAULT_TARGET_LOUDNESS, DEFAULT_TRUE_PEAK, DEFAULT_LOUDNESS_RANGE
+)
 
 # =========================
 # Configuration variables
@@ -49,46 +54,13 @@ from pathlib import Path
 # These defaults will be overridden by command line arguments
 INPUT_FOLDER = "."  # Default to current directory
 OUTPUT_FOLDER = "./normalized"  # Default to 'normalized' subdirectory
-MANUAL_THREAD_LIMIT = 2  # ! Minimum number of threads to use
-AUTO_THREAD_LIMIT_DIVIDER = 3  # * Controls automatic thread calculation (cpu_count / this_value)
+MANUAL_THREAD_LIMIT = DEFAULT_THREAD_LIMIT
 OVERWRITE_OUTPUT = False  # Whether to overwrite existing files
-cpu_count = os.cpu_count() or MANUAL_THREAD_LIMIT
-MAX_WORKERS = max(cpu_count // AUTO_THREAD_LIMIT_DIVIDER, MANUAL_THREAD_LIMIT)
+MAX_WORKERS = get_max_workers(MANUAL_THREAD_LIMIT)
 
 # Processing statistics
 stats = defaultdict(int)
 start_time = time.monotonic()
-
-# =========================
-# Helper functions
-# =========================
-def print_separator():
-    """Prints a separator line for better console output readability."""
-    print("\n" + "═" * 50 + "\n")
-
-def print_file_info(filename, current, total):
-    """
-    Prints information about the file being processed.
-    
-    Args:
-        filename: Name of the file being processed
-        current: Current file number
-        total: Total number of files to process
-    """
-    print(f"Обработка файла [{current}/{total}]: {filename}")
-    print(f"Осталось задач: {total - current}")
-
-def print_final_stats():
-    """Prints final processing statistics."""
-    duration = time.monotonic() - start_time
-    print_separator()
-    print("ИТОГОВАЯ СТАТИСТИКА:")
-    print(f"Всего файлов: {stats['total']}")
-    print(f"Успешно обработано: {stats['processed']}")
-    print(f"Пропущено: {stats['skipped']}")
-    print(f"Ошибок: {stats['errors']}")
-    print(f"Затраченное время: {duration:.2f} секунд")
-    print_separator()
 
 def parse_arguments():
     """
@@ -111,12 +83,12 @@ def parse_arguments():
                         help=f"Number of concurrent processing threads (default: calculated based on CPU cores)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing output files")
-    parser.add_argument("--target-loudness", type=float, default=-16.0,
-                        help="Target integrated loudness level in LUFS (default: -16.0)")
-    parser.add_argument("--true-peak", type=float, default=-1.5,
-                        help="Maximum true peak level in dBTP (default: -1.5)")
-    parser.add_argument("--loudness-range", type=float, default=11.0,
-                        help="Target loudness range in LU (default: 11.0)")
+    parser.add_argument("--target-loudness", type=float, default=DEFAULT_TARGET_LOUDNESS,
+                        help=f"Target integrated loudness level in LUFS (default: {DEFAULT_TARGET_LOUDNESS})")
+    parser.add_argument("--true-peak", type=float, default=DEFAULT_TRUE_PEAK,
+                        help=f"Maximum true peak level in dBTP (default: {DEFAULT_TRUE_PEAK})")
+    parser.add_argument("--loudness-range", type=float, default=DEFAULT_LOUDNESS_RANGE,
+                        help=f"Target loudness range in LU (default: {DEFAULT_LOUDNESS_RANGE})")
                         
     return parser.parse_args()
 
@@ -166,42 +138,21 @@ async def process_file(filename, semaphore, file_num, total_files, loudness_para
                     stats['skipped'] += 1
                     return
 
-            # Get audio track information - use shell=False for better cross-platform compatibility
-            input_path_quoted = str(Path(input_path))  # Proper path handling for both OS
-            ffprobe_cmd = [
-                "ffprobe", "-v", "error", "-select_streams", "a",
-                "-show_entries", "stream=index:stream_tags=title",
-                "-print_format", "json", input_path_quoted
-            ]
-            
-            # Use create_subprocess_exec for better cross-platform compatibility
-            ffprobe_proc = await asyncio.create_subprocess_exec(
-                *ffprobe_cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await ffprobe_proc.communicate()
-            
-            if ffprobe_proc.returncode != 0:
-                print(f"Ошибка ffprobe: {stderr.decode()}")
-                stats['errors'] += 1
-                return
-
+            # Get audio track information
             try:
-                audio_info = json.loads(stdout.decode())
-            except json.JSONDecodeError as e:
-                print(f"Ошибка парсинга JSON: {e}")
+                audio_tracks = await get_audio_tracks(input_path)
+            except Exception as e:
+                print(f"Ошибка при получении аудио дорожек: {e}")
                 stats['errors'] += 1
                 return
 
-            audio_tracks = audio_info.get('streams', [])
             if not audio_tracks:
                 print(f"Нет аудиодорожек. Копирование файла: {filename}")
                 
                 # Create FFmpeg command arguments list
                 copy_cmd_args = [
                     "ffmpeg",
-                    "-i", input_path_quoted,
+                    "-i", str(Path(input_path)),
                     "-c", "copy"
                 ]
                 
@@ -216,24 +167,15 @@ async def process_file(filename, semaphore, file_num, total_files, loudness_para
                 return
 
             # Build ffmpeg command with filter_complex for audio normalization
-            # Using the custom loudness parameters
-            I = loudness_params["target_loudness"]
-            TP = loudness_params["true_peak"]
-            LRA = loudness_params["loudness_range"]
-            
-            filter_complex = "".join(
-                f"[0:a:{i}]loudnorm=I={I}:TP={TP}:LRA={LRA}[a{i}];"
-                for i in range(len(audio_tracks))
+            filter_complex = build_loudnorm_filter_complex(
+                audio_tracks,
+                target_loudness=loudness_params["target_loudness"],
+                true_peak=loudness_params["true_peak"],
+                loudness_range=loudness_params["loudness_range"]
             )
-            filter_complex = filter_complex.rstrip(';')
 
             # Preserve audio track titles
-            metadata_options = []
-            for i, track in enumerate(audio_tracks):
-                title = track.get('tags', {}).get('title', '')
-                if title:
-                    metadata_options.append(f"-metadata:s:a:{i}")
-                    metadata_options.append(f"title={title}")
+            metadata_options = get_metadata_options(audio_tracks)
 
             # Create FFmpeg command arguments list for better cross-platform compatibility
             ffmpeg_cmd_args = ["ffmpeg"]
@@ -242,7 +184,7 @@ async def process_file(filename, semaphore, file_num, total_files, loudness_para
                 ffmpeg_cmd_args.append("-y")
                 
             ffmpeg_cmd_args.extend([
-                "-i", input_path_quoted,
+                "-i", str(Path(input_path)),
                 "-filter_complex", filter_complex,
                 "-map", "0:v?", 
                 "-map", "0:s?"
@@ -320,7 +262,7 @@ async def main():
     }
 
     # Create output directory if it doesn't exist
-    os.makedirs(OUTPUT_FOLDER, exist_ok=True)
+    await create_output_dir(OUTPUT_FOLDER)
 
     # Get list of MKV files to process
     if os.path.isdir(INPUT_FOLDER):
@@ -341,21 +283,6 @@ async def main():
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
 
-    def signal_handler():
-        """Handle interrupt signals by canceling all tasks."""
-        print("\nПрерывание: остановка задач...")
-        stop_event.set()
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-
-    # ! Different signal handling for Windows vs Unix
-    if platform.system() == 'Windows':
-        signal.signal(signal.SIGINT, lambda *_: loop.call_soon_threadsafe(signal_handler))
-    else:
-        for sig in (signal.SIGINT, signal.SIGTERM):
-            loop.add_signal_handler(sig, signal_handler)
-
     # Create and run tasks with concurrency limit
     semaphore = asyncio.Semaphore(MAX_WORKERS)
     tasks = [
@@ -363,20 +290,21 @@ async def main():
         for i, f in enumerate(files)
     ]
 
+    # Setup signal handlers
+    cleanup_signals = setup_signal_handlers(loop, stop_event, tasks)
+
     try:
         await asyncio.gather(*tasks)
     except asyncio.CancelledError:
         await asyncio.gather(*tasks, return_exceptions=True)
     finally:
-        if platform.system() != 'Windows':
-            for sig in (signal.SIGINT, signal.SIGTERM):
-                loop.remove_signal_handler(sig)
+        cleanup_signals()
 
-    print_final_stats()
+    print_final_stats(stats, start_time)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nПрограмма остановлена пользователем.")
-        print_final_stats()
+        print_final_stats(stats, start_time)

@@ -25,30 +25,22 @@ Examples:
 """
 import os
 import asyncio
-import time
 import argparse
-from collections import defaultdict
 from pathlib import Path
 
 # Import common utilities
 from ffmpeg_utils import (
-    print_separator, print_file_info, print_final_stats,
     get_audio_tracks, build_loudnorm_filter_complex, get_metadata_options,
-    get_max_workers, setup_signal_handlers, create_output_dir,
-    DEFAULT_THREAD_LIMIT, DEFAULT_TARGET_LOUDNESS, DEFAULT_TRUE_PEAK, DEFAULT_LOUDNESS_RANGE
+    run_ffmpeg_command, standard_main, check_output_file_exists, print_separator,
+    print_file_info, clean_partial_output, DEFAULT_OUTPUT_FOLDER, ProcessingStats
 )
 
-# Configuration variables
-INPUT_PRIMARY = None  # Primary input (audio/subtitles)
-INPUT_VIDEO = None    # Video source
-OUTPUT_FOLDER = "./normalized"
-MANUAL_THREAD_LIMIT = DEFAULT_THREAD_LIMIT
-OVERWRITE_OUTPUT = False
-MAX_WORKERS = get_max_workers(MANUAL_THREAD_LIMIT)
-stats = defaultdict(int)
-start_time = time.monotonic()
+# * Default configuration
+OUTPUT_FOLDER = DEFAULT_OUTPUT_FOLDER
+DEFAULT_CRF = 22
 
 def parse_arguments():
+    """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Normalize audio and replace video stream using dual input files",
         epilog=__doc__.split("\n")[3]
@@ -58,22 +50,24 @@ def parse_arguments():
     parser.add_argument("-i2", "--input-video", required=True,
                         help="Secondary input file (provides video stream)")
     parser.add_argument("-o", "--output", 
-                        help="Output folder path (default: ./normalized)")
+                        help=f"Output folder path (default: {DEFAULT_OUTPUT_FOLDER})")
     parser.add_argument("-t", "--threads", type=int,
                         help="Number of concurrent tasks (default: auto)")
     parser.add_argument("--overwrite", action="store_true",
                         help="Overwrite existing output files")
-    parser.add_argument("--crf", type=int, default=22,
-                        help="HEVC CRF value (lower = better quality, default: 22)")
-    parser.add_argument("--target-loudness", type=float, default=DEFAULT_TARGET_LOUDNESS,
-                        help=f"Target integrated loudness level in LUFS (default: {DEFAULT_TARGET_LOUDNESS})")
-    parser.add_argument("--true-peak", type=float, default=DEFAULT_TRUE_PEAK,
-                        help=f"Maximum true peak level in dBTP (default: {DEFAULT_TRUE_PEAK})")
-    parser.add_argument("--loudness-range", type=float, default=DEFAULT_LOUDNESS_RANGE,
-                        help=f"Target loudness range in LU (default: {DEFAULT_LOUDNESS_RANGE})")
+    parser.add_argument("--crf", type=int, default=DEFAULT_CRF,
+                        help=f"HEVC CRF value (lower = better quality, default: {DEFAULT_CRF})")
+    parser.add_argument("--target-loudness", type=float,
+                        help="Target integrated loudness level in LUFS (default: -16.0)")
+    parser.add_argument("--true-peak", type=float,
+                        help="Maximum true peak level in dBTP (default: -1.5)")
+    parser.add_argument("--loudness-range", type=float,
+                        help="Target loudness range in LU (default: 11.0)")
+    parser.add_argument("--quiet", action="store_true",
+                        help="Suppress progress output")
     return parser.parse_args()
 
-async def replace_video_only(primary_path, video_path, output_path, crf):
+async def replace_video_only(primary_path, video_path, output_path, crf, stats, overwrite=False, quiet=False):
     """
     Replace video stream without audio normalization.
     
@@ -82,10 +76,23 @@ async def replace_video_only(primary_path, video_path, output_path, crf):
         video_path: Path to video input file
         output_path: Path for output file
         crf: Constant Rate Factor for video encoding
+        stats: ProcessingStats object to update
+        overwrite: Whether to overwrite existing files
+        quiet: Whether to suppress progress output
     """
+    # Skip if file exists and overwrite is False
+    if check_output_file_exists(output_path, overwrite):
+        stats.increment("skipped")
+        return
+    
+    filename = os.path.basename(primary_path) + " + " + os.path.basename(video_path)
+    
     ffmpeg_cmd = [
         "ffmpeg",
-        "-y" if OVERWRITE_OUTPUT else "",
+        "-hide_banner",  # Скрыть баннер версии
+        "-loglevel", "warning",  # Показывать только предупреждения и ошибки
+        "-stats",  # Сохранить вывод статистики/прогресса
+        "-y" if overwrite else "",
         "-i", str(primary_path),
         "-i", str(video_path),
         "-map", "0:v? -flags +bitexact",  # Explicitly exclude primary video
@@ -105,32 +112,24 @@ async def replace_video_only(primary_path, video_path, output_path, crf):
         str(output_path)
     ]
     
-    # Filter empty strings from command
-    ffmpeg_cmd = [arg for arg in ffmpeg_cmd if arg]
-    
-    print("Запуск копирования видео:")
-    print(" ".join(ffmpeg_cmd))
-    
-    proc = await asyncio.create_subprocess_exec(
-        *ffmpeg_cmd,
-        stderr=asyncio.subprocess.PIPE
+    await run_ffmpeg_command(
+        ffmpeg_cmd, stats, quiet=quiet, 
+        output_path=output_path,
+        file_position=1, file_count=1, filename=filename
     )
-    await proc.communicate()
-    
-    if proc.returncode == 0:
-        stats['processed'] += 1
-        print("Копирование завершено успешно")
-    else:
-        stats['errors'] += 1
-        print(f"Ошибка копирования видео")
 
-async def process_files(args):
-    global MAX_WORKERS, OVERWRITE_OUTPUT, stats
-    OVERWRITE_OUTPUT = args.overwrite
-    MAX_WORKERS = args.threads or MAX_WORKERS
-    OUTPUT_FOLDER = args.output or "./normalized"
+async def process_files(args, stats):
+    """
+    Process the merge operation on the input files.
     
-    await create_output_dir(OUTPUT_FOLDER)
+    Args:
+        args: Command line arguments
+        stats: ProcessingStats object
+    """
+    # Setup configuration
+    output_folder = args.output or DEFAULT_OUTPUT_FOLDER
+    overwrite = args.overwrite
+    quiet = args.quiet if hasattr(args, 'quiet') else False
     
     # Prepare input paths
     primary_path = Path(args.input_primary).resolve()
@@ -138,31 +137,40 @@ async def process_files(args):
     
     # Get output filename
     output_filename = f"{primary_path.stem}_normalized_{video_path.stem}.mkv"
-    output_path = Path(OUTPUT_FOLDER) / output_filename
+    output_path = Path(output_folder) / output_filename
     
-    if output_path.exists() and not OVERWRITE_OUTPUT:
-        stats['skipped'] += 1
-        print(f"Файл существует: {output_filename}, пропускаем")
+    # Update total files stat
+    stats.increment("total")
+    
+    # Skip if file exists
+    if check_output_file_exists(output_path, overwrite):
+        stats.increment("skipped")
         return
     
+    # Print separator
     print_separator()
-    print(f"Обработка: {primary_path.name} + {video_path.name}")
+    
+    # Print file info with position
+    filename = f"{primary_path.name} + {video_path.name}"
+    print_file_info(filename, 1, 1)
     
     try:
-        # Get audio track info from primary source
+        # Get audio track information
         audio_tracks = await get_audio_tracks(primary_path)
         
         if not audio_tracks:
-            print("Нет аудиодорожек, копирование...")
             # Fallback to direct copy with video replacement
-            await replace_video_only(primary_path, video_path, output_path, args.crf)
+            await replace_video_only(
+                primary_path, video_path, output_path, 
+                args.crf, stats, overwrite, quiet
+            )
             return
         
         # Build filter_complex for audio normalization
         loudness_params = {
-            "target_loudness": args.target_loudness,
-            "true_peak": args.true_peak,
-            "loudness_range": args.loudness_range
+            "target_loudness": args.target_loudness if args.target_loudness is not None else -16.0,
+            "true_peak": args.true_peak if args.true_peak is not None else -1.5,
+            "loudness_range": args.loudness_range if args.loudness_range is not None else 11.0
         }
         filter_complex = build_loudnorm_filter_complex(
             audio_tracks, 
@@ -177,7 +185,10 @@ async def process_files(args):
         # Build FFmpeg command
         ffmpeg_cmd = [
             "ffmpeg",
-            "-y" if OVERWRITE_OUTPUT else "",
+            "-hide_banner",  # Скрыть баннер версии
+            "-loglevel", "warning",  # Показывать только предупреждения и ошибки
+            "-stats",  # Сохранить вывод статистики/прогресса
+            "-y" if overwrite else "",
             "-i", str(primary_path),
             "-i", str(video_path),
             "-filter_complex", filter_complex,
@@ -208,54 +219,32 @@ async def process_files(args):
         ])
         
         # Execute command
-        print("Запуск кодирования:")
-        # Filter out empty strings
-        ffmpeg_cmd = [arg for arg in ffmpeg_cmd if arg]
-        print(" ".join(ffmpeg_cmd))
-        
-        proc = await asyncio.create_subprocess_exec(
-            *ffmpeg_cmd,
-            stderr=asyncio.subprocess.PIPE
+        await run_ffmpeg_command(
+            ffmpeg_cmd, stats, quiet=quiet, 
+            output_path=output_path,
+            file_position=1, file_count=1, filename=filename
         )
-        await proc.communicate()
-        
-        if proc.returncode == 0:
-            stats['processed'] += 1
-            print("Обработка завершена успешно")
-        else:
-            stats['errors'] += 1
-            print(f"Ошибка кодирования")
     
+    except asyncio.CancelledError:
+        # Mark as skipped if interrupted
+        if not stats.interrupted:
+            stats.increment("skipped")
+        clean_partial_output(output_path)
+        raise
+        
     except Exception as e:
-        stats['errors'] += 1
+        if not stats.interrupted:
+            stats.increment("errors")
         print(f"Произошла ошибка: {str(e)}")
-    finally:
-        stats['total'] += 1
+        clean_partial_output(output_path)
 
 async def main():
-    global stats
+    """Main entry point for the script."""
     args = parse_arguments()
-    
-    # Setup signal handling
-    loop = asyncio.get_running_loop()
-    stop_event = asyncio.Event()
-    task = asyncio.create_task(process_files(args))
-    tasks = [task]
-    
-    cleanup_signals = setup_signal_handlers(loop, stop_event, tasks)
-    
-    try:
-        await task
-    except asyncio.CancelledError:
-        print("\nЗадача отменена")
-    finally:
-        cleanup_signals()
-    
-    print_final_stats(stats, start_time)
+    await standard_main(args, process_files, DEFAULT_OUTPUT_FOLDER)
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
         print("\nПрограмма остановлена пользователем.")
-        print_final_stats(stats, start_time)

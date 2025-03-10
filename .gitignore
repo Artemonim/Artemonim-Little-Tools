@@ -1,47 +1,20 @@
-# Зависимости
-node_modules/
-
-# Скомпилированные файлы
-dist/
-build/
-*.js.map
-
-# Файлы среды разработки
+# Development environment files
 .vscode/
-.idea/
-*.sublime-project
-*.sublime-workspace
 
-# Временные файлы ОС
+# Structure files
+!.gitkeep
+
+# Temporary OS files
 .DS_Store
 Thumbs.db
 
-# Логи
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-*.log
+# Environment files
+.venv
 
-# Файлы окружения
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Кэш
-.cache/
-.parcel-cache/
-
-# Файлы покрытия тестами
-coverage/
-
-# Временные файлы
+# Temporary files
 *.tmp
 *.temp
 temporary/*
-!temporary/.gitkeep
-demo/scripts.json
 
-# Файлы TypeScript
-*.tsbuildinfo
+# Logs
+*.log

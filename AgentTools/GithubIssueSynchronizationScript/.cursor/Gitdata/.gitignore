@@ -1,0 +1,7 @@
+# Git Interactions
+gitsync_issues_cache.json
+gitsync_open_issues_summary.json
+gitsync_last_run.json
+temp.txt
+__pycache__
+temp_bodies/**

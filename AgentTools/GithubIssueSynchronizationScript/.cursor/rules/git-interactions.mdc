@@ -1,0 +1,52 @@
+---
+description: 
+globs: ghsync.py
+alwaysApply: false
+---
+## Git Interactions with GitHub CLI
+DO NOT TRUST THE TERMNIAL when it says about errors
+
+*   **Script**: `.cursor/Gitdata/ghsync.py`
+*   **Description**: Wrapper around the GitHub CLI (`gh`).
+*   **Requirement**: GitHub CLI (`gh`) must be installed and authenticated (`gh auth login`).
+
+*   **Params**:
+    *   `-d, --download`: Fetch repository labels and all issues, including their title, body, labels, comments, and state.
+        *   **Summary File**: `.cursor/Gitdata/gitsync_open_issues_summary.json`. Renamed to `.cursor/Gitdata/gitsync_issues_summary.json` to reflect that it now contains all issues.
+            *   Format: A single JSON object with keys `labels` (a compact array) and `issues` (an array with each issue object on a new line).
+            *   Contents: Includes repository labels and **all issues** (open, closed, not planned) with their details, comments, and state. Issues are sorted by state: open, closed (completed), closed (not planned).
+        *   *(Note: The separate `gitsync_issues_cache.json` file is no longer used by `ghsync.py`)*.
+    *   `-u, --upload`: Create a new issue.
+        *   Requires: `--title <t>` (string, mandatory)
+        *   Optional: `--body <b>` (string), `--labels <l1> <l2> ...` (list of strings). Use only existing repository labels.
+        *   Optional: `--body-from-file <filename>` (string): Read issue body from a file in the `.cursor/Gitdata/temp_bodies` directory to overcome command line length limitations. The file will be deleted after reading.
+    *   `-e, --edit <IssueNumber>`: Edit an existing issue.
+        *   Optional: `-NewTitle <t>` (string): Set new title.
+        *   Optional: `-NewBody <b>` (string): Set new body.
+        *   Optional: `-NewBodyFromFile <filename>` (string): Read new body from a file in the `.cursor/Gitdata/temp_bodies` directory to overcome command line length limitations. The file will be deleted after reading.
+        *   Optional: `-NewLabels <l1> <l2> ...` (list of strings): Add new labels (existing labels are preserved).
+        *   Optional: `-NewState <open|closed|not_planned>` (string): Change issue state. Use `open`, `closed`, or `not_planned`. `closed` will set the reason to 'completed', `not_planned` will set the reason to 'not planned'.
+        *   **Important**: Labels are ADDED to existing ones, not replaced. Use only existing repository labels.
+
+*   **State Reasons**: When an issue is closed, GitHub allows specifying a reason. `ghsync.py` now supports setting the reason to 'completed' or 'not planned' via the `-NewState` parameter.
+
+*   **Defaults**:
+    *   `--owner "Artemonim"`
+    *   `--repo "Artemonim-s-Task-Manager"`
+
+*   **Verify**:
+    *   ALWAYS read `.cursor/Gitdata/gitsync_last_run.json` after every `ghsync.py` execution (DO NOT TRUST THE TERMNIAL without this):
+        *   Check `"operation_status": "success"`
+        *   See `operation_message`, `script_error_details`, `issue_number`, `timestamp`, `operation`
+
+*   **True Success Condition:** `.cursor/Gitdata/gitsync_last_run.json` file shows `"operation_status": "success"`.
+*   **Failure Condition:** `.cursor/Gitdata/gitsync_last_run.json` shows `"operation_status": "failure"`. DO NOT TRUST THE TERMNIAL without this.
+*   **Usage Examples**: 
+    *   Download: `python .cursor/Gitdata/ghsync.py -d`
+    *   Upload: `python .cursor/Gitdata/ghsync.py -u --title "Your Issue Title" --body "Issue body" --labels "label1" "label2"`
+    *   Upload with file: `python .cursor/Gitdata/ghsync.py -u --title "Your Issue Title" --body-from-file "your_body_file.txt" --labels "label1"`
+    *   Edit: `python .cursor/Gitdata/ghsync.py -e 123 -NewTitle "New Title" -NewLabels "label1" "label2"`
+    *   Edit with file: `python .cursor/Gitdata/ghsync.py -e 123 -NewBodyFromFile "your_new_body_file.txt" -NewLabels "label1"`
+    *   Close issue as completed: `python .cursor/Gitdata/ghsync.py -e 123 -NewState "closed"`
+    *   Close issue as not planned: `python .cursor/Gitdata/ghsync.py -e 123 -NewState "not_planned"`
+    *   Reopen issue: `python .cursor/Gitdata/ghsync.py -e 123 -NewState "open"`

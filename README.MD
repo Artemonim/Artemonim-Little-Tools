@@ -93,3 +93,20 @@ python requirementsBuilder.py
 You can request a custom tool by contacting me at [t.me/Artemonim](https://t.me/Artemonim) or Artemonim@yandex.ru.
 
 If any of these tools have been particularly helpful to you, feel free to express your appreciation! :3
+
+## Agent Tools
+
+### GitHub Issue Synchronization Script for Cursor IDE
+
+`ghsync.py` allows your Agent to interact with GitHub issues in your repository.
+
+It enables reading all labels and issues, editing existing issues, and creating new ones. The script supports changing issue status but cannot delete issues.
+
+**Requirements:**
+
+1.  **Python 3**: Ensure Python 3 is installed on your system.
+2.  **GitHub CLI (gh)**: The [GitHub CLI](https://cli.github.com/) must be installed and authenticated (`gh auth login`).
+
+**Usage:**
+
+Add the `.cursor` folder to your repository and read [ghsync_Readme.md](/AgentTools/GithubIssueSynchronizationScript/.cursor/Gitdata/ghsync_Readme.md).

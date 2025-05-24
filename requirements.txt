@@ -1,0 +1,17 @@
+# LittleTools Dependencies
+# Install only what you need for the tools you use
+
+# Text Tools Dependencies
+# For Infinite Differ (Multiple Text Comparator)
+PyQt6>=6.4.0
+
+# For Word-Markdown Converter
+pypandoc>=1.13
+
+# Video Tools Dependencies
+# All video tools use only standard library modules
+# External system dependencies required:
+# - ffmpeg (system binary, must be installed separately)
+# - ffprobe (part of ffmpeg package)
+
+# Note: Telegram Chats Distiller uses only standard library modules 

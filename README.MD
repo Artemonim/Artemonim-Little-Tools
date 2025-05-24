@@ -4,6 +4,24 @@
 
 A collection of small utility tools created for [personal commercial and non-commercial needs](/LICENSE). These tools aim to solve specific problems efficiently and can be used across different environments.
 
+## 🚀 Quick Setup
+
+For easy environment management and automated file processing, use our setup menu:
+
+```bash
+python menu.py
+```
+
+**Features:**
+
+-   📁 Automatic file processing (`0-INPUT-0` → `0-OUTPUT-0`)
+-   🔧 Single virtual environment for all tools
+-   📦 Install only the dependencies you need
+-   🚀 Batch processing for multiple files
+-   🧹 Optional source file cleanup after processing
+
+See [SETUP_README.md](SETUP_README.md) for detailed setup instructions.
+
 ## Text Tools
 
 ### Telegram Chats Distiller

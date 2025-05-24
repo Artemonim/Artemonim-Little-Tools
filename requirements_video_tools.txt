@@ -1,0 +1,6 @@
+# Video Tools Dependencies
+# All tools use only standard library modules
+# External system dependencies required:
+# - ffmpeg (system binary, must be installed separately)
+# - ffprobe (part of ffmpeg package)
+# Python modules used: os, asyncio, argparse, pathlib, json, subprocess, signal, time, sys, re, collections 

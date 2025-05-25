@@ -19,6 +19,8 @@ import ffmpeg # type: ignore
 import torch # type: ignore
 import tqdm # type: ignore
 from typing import Optional, Tuple # Added for type hinting
+import re
+import time
 
 # * Increase recursion limit at module level to avoid RecursionError
 sys.setrecursionlimit(10000)
@@ -37,8 +39,18 @@ DEFAULT_OUTPUT_DIR_NAME = "0-OUTPUT-0" # Relative to project root if run via men
 DEFAULT_INPUT_DIR_NAME = "0-INPUT-0"   # Relative to project root if run via menu
 TEMPERATURE = 0.25
 
+# * Paths to sound files
+SUCCESS_SOUND_PATH = SCRIPT_DIR / "Sounds" / "task_complete.opus"
+ERROR_SOUND_PATH = SCRIPT_DIR / "Sounds" / "error.opus"
+
 # * Global variables for interruption handling
 _interrupted = False
+
+# * Global variables for time estimation
+_batch_start_time = None
+_total_audio_seconds_processed = 0.0
+_total_audio_seconds_remaining = 0.0
+_files_processed = 0
 
 SUPPORTED_EXTENSIONS = [
     ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",  # Common audio
@@ -62,16 +74,70 @@ def ensure_dir_exists(dir_path: Path):
     """Create directory if it doesn't exist."""
     dir_path.mkdir(parents=True, exist_ok=True)
 
+def play_sound(sound_path: Path):
+    """Play a sound file using ffplay."""
+    try:
+        subprocess.run(
+            ["ffplay", "-nodisp", "-autoexit", str(sound_path)],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False
+        )
+    except Exception:
+        pass
 
+def get_audio_duration(file_path: Path) -> float:
+    """Get audio duration in seconds from a media file."""
+    try:
+        probe = ffmpeg.probe(str(file_path))
+        return float(probe['format']['duration'])
+    except Exception:
+        return 0.0
+
+def calculate_estimated_time_remaining() -> str:
+    """Calculate estimated time remaining for batch processing."""
+    global _batch_start_time, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
+    
+    if _files_processed == 0 or _batch_start_time is None:
+        return "N/A"
+    
+    elapsed_time = time.time() - _batch_start_time
+    
+    if _total_audio_seconds_processed <= 0:
+        return "N/A"
+    
+    # Calculate processing rate (seconds of audio per second of real time)
+    processing_rate = _total_audio_seconds_processed / elapsed_time
+    
+    if processing_rate <= 0:
+        return "N/A"
+    
+    # Estimate remaining time
+    estimated_seconds = _total_audio_seconds_remaining / processing_rate
+    
+    # Format time as HH:MM:SS or MM:SS
+    if estimated_seconds >= 3600:
+        hours = int(estimated_seconds // 3600)
+        minutes = int((estimated_seconds % 3600) // 60)
+        seconds = int(estimated_seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    else:
+        minutes = int(estimated_seconds // 60)
+        seconds = int(estimated_seconds % 60)
+        return f"{minutes:02d}:{seconds:02d}"
 
 def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int = 1, total_files: int = 1) -> bool:
     """Transcribe a single audio or video file."""
-    global _interrupted
+    global _interrupted, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
     
     if _interrupted:
         return False
     
-    print(f"* Processing ({current_file}/{total_files}): {file_path.name}")
+    print(f"* Processing ({current_file}/{total_files} est. {calculate_estimated_time_remaining()}): {file_path.name}")
+    
+    # * Track processing start time
+    file_start_time = time.time()
+    file_duration = 0.0
     
     temp_audio_file = None
     try:
@@ -105,6 +171,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
         try:
             probe = ffmpeg.probe(str(audio_to_transcribe))
             total_duration = float(probe['format']['duration'])
+            file_duration = total_duration
         except Exception:
             total_duration = None
 
@@ -113,17 +180,25 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
 
         if total_duration:
             from contextlib import redirect_stdout
-            import re
 
             class TqdmWriter:
                 def __init__(self, total):
-                    self.pbar = tqdm.tqdm(total=total, unit='s', unit_scale=True)
+                    self.pbar = tqdm.tqdm(
+                        total=total, 
+                        unit='s', 
+                        unit_scale=True, 
+                        unit_divisor=1000,
+                        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt}s [{elapsed}<{remaining}, {rate_fmt}]'
+                    )
                 def write(self, text):
-                    m = re.search(r'\[(\d+):(\d+\.\d+) +--> +(\d+):(\d+\.\d+)\]', text)
+                    # * Handle both MM:SS.ss and HH:MM:SS.ss timestamp formats
+                    m = re.search(r'\[(?:(\d+):)?(\d+):(\d+\.\d+) +--> +(?:(\d+):)?(\d+):(\d+\.\d+)\]', text)
                     if m:
-                        minutes = int(m.group(3))
-                        seconds = float(m.group(4))
-                        current = minutes * 60 + seconds
+                        # Extract end timestamp (groups 4, 5, 6)
+                        end_hours = int(m.group(4)) if m.group(4) else 0
+                        end_minutes = int(m.group(5))
+                        end_seconds = float(m.group(6))
+                        current = end_hours * 3600 + end_minutes * 60 + end_seconds
                         self.pbar.n = current
                         self.pbar.refresh()
                 def flush(self):
@@ -146,6 +221,12 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
             f.write(result['text'])
         
         print(f"  ✓ Transcription saved to: {output_file.name}")
+        
+        # * Update time tracking variables
+        _total_audio_seconds_processed += file_duration
+        _total_audio_seconds_remaining -= file_duration
+        _files_processed += 1
+        
         return True
         
     except Exception as e:
@@ -215,8 +296,6 @@ def check_existing_output_files(output_dir: Path, files_to_process: list) -> Tup
                 return 'cancel', set()
     
     return 'continue', set()
-
-
 
 def main():
     """Main function to parse arguments and run transcription."""
@@ -299,7 +378,6 @@ def main():
             input_path = SCRIPT_DIR.parent # Fallback to script's parent dir
             print(f"? Input path not specified and default '{DEFAULT_INPUT_DIR_NAME}' not found. Using '{input_path}'.")
 
-
     if args.output and Path(args.output).is_absolute():
         output_dir = Path(args.output)
     elif args.output: # Relative path provided
@@ -356,6 +434,7 @@ def main():
     overwrite_action, files_to_skip = check_existing_output_files(output_dir, files_to_process)
     if overwrite_action == 'cancel':
         print("* Operation cancelled by user.")
+        play_sound(ERROR_SOUND_PATH)
         sys.exit(0)
     elif overwrite_action == 'skip_existing':
         files_to_process = [f for f in files_to_process if f not in files_to_skip]
@@ -372,6 +451,28 @@ def main():
         print(f"! Failed to load Whisper model '{args.model}': {e}")
         print("  Please ensure the model name is correct and you have internet access for the first download.")
         sys.exit(1)
+
+    # * Initialize time tracking variables
+    global _batch_start_time, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
+    _batch_start_time = time.time()
+    _total_audio_seconds_processed = 0.0
+    _files_processed = 0
+    
+    # * Calculate total audio duration for all files
+    _total_audio_seconds_remaining = 0.0
+    print("* Calculating total audio duration...")
+    for file_path in files_to_process:
+        duration = get_audio_duration(file_path)
+        _total_audio_seconds_remaining += duration
+    
+    if _total_audio_seconds_remaining > 0:
+        hours = int(_total_audio_seconds_remaining // 3600)
+        minutes = int((_total_audio_seconds_remaining % 3600) // 60)
+        seconds = int(_total_audio_seconds_remaining % 60)
+        if hours > 0:
+            print(f"* Total audio duration: {hours:02d}:{minutes:02d}:{seconds:02d}")
+        else:
+            print(f"* Total audio duration: {minutes:02d}:{seconds:02d}")
 
     successful_transcriptions = 0
     for current_file_num, file_to_process in enumerate(files_to_process, 1):
@@ -391,10 +492,15 @@ def main():
     
     if _interrupted:
         print("  Status: Interrupted by user")
+        play_sound(ERROR_SOUND_PATH)
         sys.exit(130)  # Standard exit code for SIGINT
 
-    if successful_transcriptions < len(files_to_process) and files_to_process :
-        sys.exit(1) # Indicate partial failure if there were files to process
+    if successful_transcriptions < len(files_to_process) and files_to_process:
+        play_sound(ERROR_SOUND_PATH)
+        sys.exit(1)  # Indicate partial failure if there were files to process
+
+    # * Play success notification
+    play_sound(SUCCESS_SOUND_PATH)
 
 if __name__ == "__main__":
     # For ffmpeg-python to find ffmpeg when script is frozen by PyInstaller

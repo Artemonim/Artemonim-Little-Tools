@@ -6,11 +6,32 @@ A collection of small utility tools created for [personal commercial and non-com
 
 ## 🚀 Quick Setup
 
-For easy environment management and automated file processing, use our setup menu:
+For easy environment management and automated file processing, use our setup scripts:
+
+**Windows (Recommended):**
+
+```powershell
+.\start.ps1
+```
+
+**Windows (Alternative):**
+
+```cmd
+start.bat
+```
+
+**Manual (All platforms):**
 
 ```bash
 python menu.py
 ```
+
+The startup scripts will:
+
+-   ✅ Check Python 3.8+ installation
+-   ✅ Create/verify virtual environment with pip
+-   ✅ Handle common environment issues automatically
+-   ✅ Launch the interactive menu
 
 **Features:**
 
@@ -19,8 +40,37 @@ python menu.py
 -   📦 Install only the dependencies you need
 -   🚀 Batch processing for multiple files
 -   🧹 Optional source file cleanup after processing
+-   🎤 Audio/Video transcription with OpenAI Whisper
 
 See [SETUP_README.md](SETUP_README.md) for detailed setup instructions.
+
+## Audio/Video Tools
+
+### Whisper Audio/Video Transcriber
+
+Transcribes audio and video files using OpenAI's Whisper model with GPU acceleration support.
+
+**Features:**
+
+-   Supports multiple audio formats (MP3, WAV, M4A, AAC, OGG, FLAC)
+-   Supports multiple video formats (MP4, MKV, MOV, AVI, WebM)
+-   GPU acceleration for faster processing (CUDA)
+-   Automatic model downloading and caching
+-   Medium model by default for optimal quality/speed balance
+-   Automatic audio extraction from video files using FFmpeg
+-   Batch processing of entire directories
+
+**Dependencies:**
+
+-   openai-whisper
+-   ffmpeg (system dependency)
+-   CUDA-compatible GPU (optional, for acceleration)
+
+**Usage:**
+
+```bash
+python Audio-_Video-2-Text/whisper_transcriber.py [options]
+```
 
 ## Text Tools
 

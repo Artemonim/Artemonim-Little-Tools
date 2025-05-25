@@ -1,0 +1,11 @@
+# Core dependencies for Whisper transcriber (GPU only)
+setuptools>=65.0.0
+wheel>=0.38.0
+
+# GPU-specific PyTorch and torchaudio wheels
+# Available versions: 2.6.0+cu118, 2.7.0+cu118
+torch==2.7.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+torchaudio==2.7.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118
+
+openai-whisper>=20231117
+ffmpeg-python>=0.2.0 

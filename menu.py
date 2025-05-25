@@ -28,6 +28,7 @@ import glob
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+import signal  # * Better Comments: signal handling for cleanup
 
 # * Configuration variables
 SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -88,7 +89,8 @@ TOOLS = {
         "input_extensions": [".mkv"],
         "output_extension": "_normalized.mkv",
         "args_template": ["-i", "{input_dir}", "-o", "{output_dir}"],
-        "needs_dependencies": False
+        "needs_dependencies": False,
+        "batch_takes_dir_input": True
     },
     "topaz_merger": {
         "name": "Topaz Video Merger",
@@ -102,9 +104,65 @@ TOOLS = {
         "output_extension": "_merged.mkv",
         "args_template": ["-i1", "{primary_input}", "-i2", "{video_input}", "-o", "{output_dir}"],
         "needs_dependencies": False
+    },
+    "whisper_transcriber": {
+        "name": "Whisper Audio/Video Transcriber",
+        "description": "Transcribe audio/video files using OpenAI Whisper. Processes entire input dir.",
+        "path": "Audio-_Video-2-Text",
+        "script": "whisper_transcriber.py",
+        "requirements_file": "Audio-_Video-2-Text/requirements_whisper_transcriber.txt",
+        "system_deps": ["ffmpeg"],
+        "supports_batch": True,
+        "batch_takes_dir_input": True,
+        "input_extensions": [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mp4", ".mkv", ".mov", ".avi", ".webm"],
+        "output_extension": ".txt",
+        "args_template": ["-i", "{input_dir}", "-o", "{output_dir}", "--model", "large-v3-turbo"],
+        "needs_dependencies": True
     }
 }
 
+# Global state for tracking current installation
+_current_installation = {
+    "tool_id": None,
+    "packages_installed": [],
+    "python_exe": None,
+    "in_progress": False
+}
+
+# Handle Ctrl+C to rollback current installation only
+def _signal_handler(signum, frame):
+    if _current_installation["in_progress"]:
+        print("\n* Installation interrupted by user. Rolling back current installation...")
+        _rollback_current_installation()
+    else:
+        print("\n* Operation interrupted by user.")
+    sys.exit(1)
+
+def _rollback_current_installation():
+    """Rollback packages installed during current session."""
+    if not _current_installation["packages_installed"] or not _current_installation["python_exe"]:
+        print("* No packages to rollback.")
+        return
+    
+    python_exe = _current_installation["python_exe"]
+    packages = _current_installation["packages_installed"]
+    tool_id = _current_installation["tool_id"]
+    
+    print(f"* Uninstalling {len(packages)} package(s) for {tool_id}...")
+    for package in packages:
+        try:
+            subprocess.run([python_exe, "-m", "pip", "uninstall", "-y", package], 
+                         check=True, capture_output=True, text=True)
+            print(f"  ✓ Uninstalled: {package}")
+        except subprocess.CalledProcessError as e:
+            print(f"  ! Failed to uninstall {package}: {e}")
+    
+    # Clear tracking
+    _current_installation["packages_installed"].clear()
+    _current_installation["tool_id"] = None
+    _current_installation["in_progress"] = False
+
+signal.signal(signal.SIGINT, _signal_handler)
 
 def clear_screen_if_compact(is_compact: bool):
     """Clears the terminal screen if compact mode is enabled."""
@@ -194,17 +252,56 @@ class ToolManager:
         return True
     
     def create_venv(self) -> bool:
+        """Creates virtual environment with proper pip installation."""
         if VENV_DIR.exists():
             return True
         print("* Creating virtual environment...")
         try:
-            subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR)], 
+            subprocess.run([sys.executable, "-m", "venv", str(VENV_DIR), "--upgrade-deps"], 
                          check=True, text=True)
             print(f"* Virtual environment created: {VENV_DIR}")
+            
+            # Verify pip is available
+            if not self.verify_and_fix_pip():
+                return False
+                
             return True
         except subprocess.CalledProcessError as e:
             print(f"! Failed to create virtual environment: {e}")
             return False
+    
+    def verify_and_fix_pip(self) -> bool:
+        """Verifies pip is available in venv and attempts to fix if missing."""
+        python_exe = self.get_venv_python()
+        if not python_exe:
+            print("! Virtual environment Python not found.")
+            return False
+        
+        # Check if pip is available
+        try:
+            subprocess.run([python_exe, "-m", "pip", "--version"], 
+                         capture_output=True, check=True, text=True)
+            return True
+        except subprocess.CalledProcessError:
+            print("! pip not found in virtual environment. Attempting to bootstrap...")
+            
+            # Try to bootstrap pip using ensurepip
+            try:
+                subprocess.run([python_exe, "-m", "ensurepip", "--upgrade"], 
+                             check=True, text=True, capture_output=True)
+                print("* pip bootstrapped successfully.")
+                
+                # Verify pip works now
+                subprocess.run([python_exe, "-m", "pip", "--version"], 
+                             capture_output=True, check=True, text=True)
+                return True
+            except subprocess.CalledProcessError as e:
+                print(f"! Failed to bootstrap pip: {e}")
+                print("  Please try recreating the virtual environment:")
+                print(f"  1. Delete the {VENV_DIR} directory")
+                print("  2. Run this script again")
+                print("  Or use the start.ps1 script with -Force option")
+                return False
     
     def get_venv_python(self) -> Optional[str]:
         suffix = "Scripts/python.exe" if platform.system() == "Windows" else "bin/python"
@@ -212,6 +309,7 @@ class ToolManager:
         return str(python_exe) if python_exe.exists() else None
     
     def install_tool_dependencies(self, tool_id: str) -> bool:
+        """Installs Python dependencies for a tool."""
         tool = TOOLS[tool_id]
         if not tool["needs_dependencies"]:
             if tool_id not in self.config["installed_tools"]:
@@ -233,25 +331,112 @@ class ToolManager:
                         self.save_config()
                 return True
         
-        if not self.create_venv(): return False
+        if not self.create_venv(): 
+            return False
+            
         python_exe = self.get_venv_python()
         if not python_exe:
             print("! Virtual environment Python not found.")
             return False
         
-        print(f"* Installing dependencies for {tool['name']} from {tool['requirements_file']}...")
+        # Verify pip is working before attempting installation
+        if not self.verify_and_fix_pip():
+            print("! Cannot proceed with dependency installation - pip is not available.")
+            return False
+        
+        # Initialize installation tracking
+        global _current_installation
+        _current_installation["tool_id"] = tool_id
+        _current_installation["python_exe"] = python_exe
+        _current_installation["packages_installed"] = []
+        _current_installation["in_progress"] = True
+        
         try:
-            subprocess.run([python_exe, "-m", "pip", "install", "-r", 
-                          str(requirements_path)], check=True, text=True, capture_output=True)
+            # Upgrade pip, setuptools, and wheel first to avoid build issues
+            try:
+                print(f"* Upgrading pip, setuptools, and wheel for {tool['name']}...")
+                subprocess.run([python_exe, "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"], 
+                             check=True, text=True, capture_output=True)
+                print("* Build tools upgraded successfully.")
+            except subprocess.CalledProcessError as e:
+                print(f"! Warning: Failed to upgrade build tools: {e.stderr if e.stderr else e.stdout}")
+                print("  Continuing with installation anyway...")
+            
+            # GPU-only specialized installation for Whisper Transcriber
+            if tool_id == 'whisper_transcriber':
+                try:
+                    print(f"* Installing GPU PyTorch for {tool['name']}...")
+                    subprocess.run([
+                        python_exe, "-m", "pip", "install", "--no-cache-dir",
+                        "torch==2.7.0+cu118", "torchaudio==2.7.0+cu118",
+                        "--extra-index-url", "https://download.pytorch.org/whl/cu118"
+                    ], check=True, text=True, capture_output=True)
+                    _current_installation["packages_installed"].extend(["torch", "torchaudio"])
+                    
+                    print(f"* Installing openai-whisper from GitHub for {tool['name']} (temporary workaround)...")
+                    subprocess.run([
+                        python_exe, "-m", "pip", "install", "--no-cache-dir", "git+https://github.com/openai/whisper.git"
+                    ], check=True, text=True, capture_output=True)
+                    _current_installation["packages_installed"].append("openai-whisper")
+                    
+                    print(f"* Installing ffmpeg-python for {tool['name']}...")
+                    subprocess.run([
+                        python_exe, "-m", "pip", "install", "--no-cache-dir", "ffmpeg-python>=0.2.0"
+                    ], check=True, text=True, capture_output=True)
+                    _current_installation["packages_installed"].append("ffmpeg-python")
+                    
+                    print(f"* Dependencies installed successfully for {tool['name']}.")
+                    if tool_id not in self.config["installed_tools"]:
+                        self.config["installed_tools"].append(tool_id)
+                        self.save_config()
+                    
+                    # Clear tracking on success
+                    _current_installation["in_progress"] = False
+                    _current_installation["packages_installed"].clear()
+                    return True
+                except subprocess.CalledProcessError as e:
+                    print(f"! Failed GPU-specialized install for {tool['name']}: {e.stderr.strip() if e.stderr else e.stdout.strip()}")
+                    print("  Rolling back installed packages...")
+                    _rollback_current_installation()
+                    return False
+            
+            # Generic install via requirements file
+            print(f"* Installing dependencies for {tool['name']} from {tool['requirements_file']}...")
+            
+            # Parse requirements to track individual packages
+            with open(requirements_path, 'r', encoding='utf-8') as f:
+                requirements_lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+            
+            # Extract package names for tracking
+            for req_line in requirements_lines:
+                # Extract package name (before ==, >=, etc.)
+                package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].strip()
+                if package_name:
+                    _current_installation["packages_installed"].append(package_name)
+            
+            # Prepare pip install command
+            install_cmd = [python_exe, "-m", "pip", "install", "--no-cache-dir", "-r", str(requirements_path)]
+            subprocess.run(install_cmd, check=True, text=True, capture_output=True)
             print(f"* Dependencies installed successfully for {tool['name']}.")
             if tool_id not in self.config["installed_tools"]:
                 self.config["installed_tools"].append(tool_id)
                 self.save_config()
+            
+            # Clear tracking on success
+            _current_installation["in_progress"] = False
+            _current_installation["packages_installed"].clear()
             return True
+            
         except subprocess.CalledProcessError as e:
-            print(f"! Failed to install dependencies for {tool['name']}:")
-            print(e.stderr if e.stderr else e.stdout)
+            error_output = e.stderr if e.stderr else e.stdout
+            print(f"! Failed to install dependencies for {tool['name']}:\n{error_output.strip()}")
+            print("  Rolling back installed packages...")
+            _rollback_current_installation()
+            print("  This might be due to:\n  - Network connectivity issues\n  - Package compatibility problems\n  - Insufficient disk space\n  - Build tool version conflicts\n  Try running installation again or check error details above.")
             return False
+        except KeyboardInterrupt:
+            # Signal handler will handle the rollback
+            raise
     
     def setup_tool(self, tool_id: str) -> bool:
         tool = TOOLS[tool_id]
@@ -270,15 +455,73 @@ class ToolManager:
     
     def uninstall_tool(self, tool_id: str) -> bool:
         tool = TOOLS[tool_id]
-        if tool_id in self.config["installed_tools"]:
-            self.config["installed_tools"].remove(tool_id)
-            self.save_config()
-            print(f"* {tool['name']} removed from installed tools list.")
-            print("  Note: Python dependencies (if any) remain in the .venv.")
-            return True
-        else:
+        if tool_id not in self.config["installed_tools"]:
             print(f"* {tool['name']} was not marked as installed.")
             return False
+        
+        if not tool["needs_dependencies"]:
+            self.config["installed_tools"].remove(tool_id)
+            self.save_config()
+            print(f"* {tool['name']} removed from installed tools list (no Python dependencies to uninstall).")
+            return True
+        
+        python_exe = self.get_venv_python()
+        if not python_exe:
+            print(f"! Virtual environment not found. Removing {tool['name']} from installed tools list only.")
+            self.config["installed_tools"].remove(tool_id)
+            self.save_config()
+            return True
+        
+        # Get packages to uninstall based on tool
+        packages_to_uninstall = []
+        if tool_id == 'whisper_transcriber':
+            packages_to_uninstall = ["torch", "torchaudio", "openai-whisper", "ffmpeg-python"]
+            
+            # Also remove Whisper models directory if it exists
+            models_dir = SCRIPT_DIR / "Audio-_Video-2-Text" / "models"
+            if models_dir.exists():
+                try:
+                    shutil.rmtree(models_dir)
+                    print(f"  ✓ Removed Whisper models directory: {models_dir}")
+                except Exception as e:
+                    print(f"  ! Warning: Could not remove models directory '{models_dir}': {e}")
+        else:
+            # Parse requirements file to get package names
+            requirements_path = SCRIPT_DIR / tool["requirements_file"]
+            if requirements_path.exists():
+                with open(requirements_path, 'r', encoding='utf-8') as f:
+                    requirements_lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+                
+                for req_line in requirements_lines:
+                    # Extract package name (before ==, >=, etc.)
+                    package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].strip()
+                    if package_name:
+                        packages_to_uninstall.append(package_name)
+        
+        if not packages_to_uninstall:
+            print(f"* No packages identified for uninstallation for {tool['name']}.")
+            self.config["installed_tools"].remove(tool_id)
+            self.save_config()
+            return True
+        
+        print(f"* Uninstalling Python dependencies for {tool['name']}...")
+        print(f"  Packages to remove: {', '.join(packages_to_uninstall)}")
+        
+        uninstalled_count = 0
+        for package in packages_to_uninstall:
+            try:
+                result = subprocess.run([python_exe, "-m", "pip", "uninstall", "-y", package], 
+                                     check=True, capture_output=True, text=True)
+                print(f"  ✓ Uninstalled: {package}")
+                uninstalled_count += 1
+            except subprocess.CalledProcessError:
+                # Package might not be installed, which is fine
+                print(f"  - Skipped: {package} (not installed or already removed)")
+        
+        self.config["installed_tools"].remove(tool_id)
+        self.save_config()
+        print(f"* {tool['name']} uninstalled successfully ({uninstalled_count} packages removed).")
+        return True
     
     def is_tool_ready(self, tool_id: str) -> bool:
         tool = TOOLS[tool_id]
@@ -344,22 +587,33 @@ class ToolManager:
     def run_tool_batch(self, tool_id: str) -> Tuple[bool, str]:
         tool = TOOLS[tool_id]
         
-        if tool_id == "ffmpeg_normalizer":
-            print(f"* Running {tool['name']} (processes entire input directory)...")
+        if tool.get("batch_takes_dir_input", False):
+            print(f"* Running {tool['name']} (processes entire input directory via its own logic)...")
             script_path = SCRIPT_DIR / tool["path"] / tool["script"]
             if not script_path.exists():
                 print(f"! Script {script_path.name} not found.")
                 return False, self.post_execution_menu(tool_id, False)
             
             python_exe = self.get_venv_python() or sys.executable
-            args = [a.replace("{input_dir}", str(INPUT_DIR)).replace("{output_dir}", str(OUTPUT_DIR)) for a in tool["args_template"]]
-            cmd = [python_exe, str(script_path)] + args
+            processed_args = [ \
+                    str(INPUT_DIR) if a == "{input_dir}" else \
+                    str(OUTPUT_DIR) if a == "{output_dir}" else \
+                    a for a in tool["args_template"]]
+            
+            cmd = [python_exe, str(script_path)] + processed_args
             print(f"* Executing: {' '.join(cmd)}")
             try:
                 original_cwd = os.getcwd()
                 os.chdir(SCRIPT_DIR)
                 result = subprocess.run(cmd, text=True)
                 successful_execution = result.returncode == 0
+                
+                if successful_execution and "{output_dir}" in tool["args_template"]:
+                    input_files_for_cleanup = self.get_input_files(tool_id)
+                    if input_files_for_cleanup:
+                        print("* Note: Cleanup will be offered for files in input dir matching tool's extensions.")
+                        self.offer_cleanup(input_files_for_cleanup)
+                
                 return successful_execution, self.post_execution_menu(tool_id, successful_execution)
             except Exception as e:
                 print(f"! Error running {tool['name']} in batch: {e}")
@@ -378,6 +632,9 @@ class ToolManager:
         
         print(f"* Found {len(input_files)} files to process for {tool['name']}:")
         for f in input_files: print(f"  - {f.name}")
+        
+        if input_files and tool.get("batch_takes_dir_input"):
+            print(f"  (Script will scan '{INPUT_DIR}' directly)")
         
         success_count = 0
         processed_files_map = {}
@@ -561,7 +818,7 @@ def print_menu(manager: ToolManager):
     print("\nActions:")
     num_tools = len(TOOLS)
     print(f"  {num_tools+1:2d}. Install/Setup tool dependencies")
-    print(f"  {num_tools+2:2d}. Uninstall tool (mark as not installed)")
+    print(f"  {num_tools+2:2d}. Uninstall tool (remove dependencies & mark as not installed)")
     print(f"  {num_tools+3:2d}. Show tool status & input file counts")
     compact_status = 'ON' if manager.config.get("compact_mode", True) else 'OFF'
     print(f"  {num_tools+4:2d}. Compact mode: {compact_status} (Toggle)")
@@ -657,8 +914,10 @@ def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
         
         if not manager.is_tool_ready(tool_id):
             print("\n! Tool is not ready. Dependencies might be missing or not set up.")
-            print("  Consider running 'Install/Setup tool dependencies' from the main menu.")
-            input("Press Enter to return to the main menu...")
+            choice = input("  Would you like to install dependencies for this tool now? (y/N): ").strip().lower()
+            if choice in ['y', 'yes']:
+                manager.setup_tool(tool_id)
+                input("\nPress Enter to continue...")
             return 'main_menu'
         
         input_files = manager.get_input_files(tool_id)
@@ -672,10 +931,10 @@ def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
              print("  (None)")
         
         print("\nRun Options:")
-        can_batch = tool["supports_batch"] and (input_files or tool_id == "ffmpeg_normalizer")
+        can_batch = tool["supports_batch"] and (input_files or tool.get("batch_takes_dir_input"))
         if can_batch:
             batch_note = f"(processes all compatible files from {INPUT_DIR} to {OUTPUT_DIR})" \
-                         if tool_id != "ffmpeg_normalizer" else \
+                         if not tool.get("batch_takes_dir_input") else \
                          f"(script processes entire {INPUT_DIR} to {OUTPUT_DIR})"
             print(f"  1. Batch mode {batch_note}")
         print("  2. Interactive mode (manually specify inputs/options)")
@@ -823,7 +1082,7 @@ def main():
                 input("Press Enter to return to main menu...")
 
         elif choice == str(num_tools + 2):
-            tool_to_act_on = select_single_tool_for_action(manager, "Uninstall (mark as not installed)")
+            tool_to_act_on = select_single_tool_for_action(manager, "Uninstall (remove dependencies)")
             if tool_to_act_on:
                 manager.uninstall_tool(tool_to_act_on)
                 input("\nPress Enter to return to main menu...")

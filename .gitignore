@@ -30,6 +30,8 @@ VideoTools/temp/
 *.tmp
 *.temp
 temporary/*
+0-INPUT-0/*
+0-OUTPUT-0/*
 
 # Logs
 *.log

@@ -1,0 +1,12 @@
+# Simplified dependencies for Whisper transcriber (fallback)
+# Use this if the main requirements file fails to install
+
+# Install these one by one if needed:
+# pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# pip install openai-whisper
+# pip install ffmpeg-python
+
+torch
+torchaudio
+openai-whisper
+ffmpeg-python 

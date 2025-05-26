@@ -5,8 +5,8 @@ import pypandoc
 import argparse
 
 # Configuration variables
-SOURCE_PATH = "1_WK-10C挖掘机电气产品说明书（中俄）.docx"  # Путь к исходному файлу по умолчанию
-OUTPUT_PATH = "1_WK-10C挖掘机电气产品说明书（中俄）.md"   # Путь к выходному файлу по умолчанию
+SOURCE_PATH = "PATH_TO_SOURCE_FILE"  # Путь к исходному файлу по умолчанию
+OUTPUT_PATH = "PATH_TO_OUTPUT_FILE"   # Путь к выходному файлу по умолчанию
 MEDIA_DIR = "media"         # Папка для хранения изображений по умолчанию
 
 

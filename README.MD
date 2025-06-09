@@ -131,6 +131,28 @@ A powerful tool for comparing multiple text files simultaneously with Git-like d
 python TxtTools/MultipleTextComparator/Infinite_Differ.py
 ```
 
+### Word-Markdown Converter
+
+Convert between DOCX and Markdown formats.
+
+**Features:**
+
+-   Supports conversion from DOCX to Markdown and vice-versa
+-   Handles embedded images and media, saving them to a specified directory
+-   Utilizes Pandoc for robust and accurate conversions
+-   Batch processing for multiple files
+
+**Dependencies:**
+
+-   pypandoc
+-   pandoc (system dependency)
+
+**Usage:**
+
+```bash
+python TxtTools/WMDconverter/WMDconverter.py --source <input_file> --output <output_file> [--media-dir <media_directory>]
+```
+
 ## Video Tools
 
 ### FFMPEG MKV Audio Normalizer
@@ -155,6 +177,28 @@ A tool for normalizing audio tracks in MKV video files using ffmpeg's loudnorm f
 
 ```
 python VideoTools/FFMPEG_MKV_audio_normlizer.py [options]
+```
+
+### Topaz Video Merger
+
+A dual-input video/audio normalizer and merger. This tool combines two video or audio inputs, normalizes their audio, and merges them into a single output file.
+
+**Features:**
+
+-   Accepts two input files (primary and secondary, typically video and audio)
+-   Normalizes audio for both inputs using EBU R128 loudness standard
+-   Merges inputs while preserving video and audio streams
+-   Supports various common video and audio formats
+
+**Dependencies:**
+
+-   ffmpeg
+-   ffprobe
+
+**Usage:**
+
+```bash
+python VideoTools/Topaz_Video_Merger.py -i1 <primary_input_file> -i2 <secondary_input_file> -o <output_directory>
 ```
 
 ## Utility Tools

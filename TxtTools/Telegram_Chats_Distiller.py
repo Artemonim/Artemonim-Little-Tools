@@ -16,18 +16,13 @@ import argparse
 import json
 import os
 import sys
-import signal
+from pathlib import Path
 
-def signal_handler(sig, frame):
-    """
-    Handle keyboard interrupt (Ctrl+C) gracefully.
+# * Import common utilities
+sys.path.append(str(Path(__file__).parent.parent))
+from little_tools_utils import setup_signal_handler, print_status
 
-    Args:
-        sig (int): Signal number.
-        frame (frame): Current stack frame.
-    """
-    print("\nOperation cancelled by user.")
-    sys.exit(0)
+# * Signal handling is now managed by little_tools_utils
 
 def process_telegram_chat_export(input_file, output_file):
     """
@@ -42,7 +37,7 @@ def process_telegram_chat_export(input_file, output_file):
     """
     try:
         if not os.path.exists(input_file):
-            print(f"Error: Input file not found: {input_file}")
+            print_status(f"Input file not found: {input_file}", "error")
             return False
 
         with open(input_file, "r", encoding="utf-8") as file:
@@ -50,7 +45,7 @@ def process_telegram_chat_export(input_file, output_file):
 
         messages = data.get("messages", [])
         if not isinstance(messages, list):
-            print("Error: Invalid file format. 'messages' key must contain a list.")
+            print_status("Invalid file format. 'messages' key must contain a list.", "error")
             return False
 
         new_messages = []
@@ -79,17 +74,17 @@ def process_telegram_chat_export(input_file, output_file):
         with open(output_file, "w", encoding="utf-8") as file:
             json.dump(data, file, ensure_ascii=False, indent=4)
         
-        print(f"Successfully processed file. Result saved to {output_file}")
+        print_status(f"Successfully processed file. Result saved to {output_file}", "success")
         return True
 
     except json.JSONDecodeError:
-        print(f"Error: Invalid JSON format in {input_file}")
+        print_status(f"Invalid JSON format in {input_file}", "error")
         return False
     except PermissionError:
-        print(f"Error: Permission denied when writing to {output_file}")
+        print_status(f"Permission denied when writing to {output_file}", "error")
         return False
     except Exception as e:
-        print(f"Unexpected error occurred: {e}")
+        print_status(f"Unexpected error occurred: {e}", "error")
         return False
 
 def main():
@@ -98,7 +93,7 @@ def main():
     
     Parses command-line arguments and processes Telegram chat export files.
     """
-    signal.signal(signal.SIGINT, signal_handler)
+    setup_signal_handler()
 
     parser = argparse.ArgumentParser(
         description="Process Telegram chat export JSON files by extracting and transforming messages."

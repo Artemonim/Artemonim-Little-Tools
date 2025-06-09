@@ -1,2 +1,0 @@
-# Infinite Differ (Multiple Text Comparator) Dependencies
-PyQt6>=6.4.0 

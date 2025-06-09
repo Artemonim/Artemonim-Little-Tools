@@ -92,15 +92,22 @@ If you encounter persistent issues:
 
 ### Manual Dependency Installation
 
+Dependencies are now managed centrally through `menu.py`. Use the interactive menu to install tool dependencies:
+
+```bash
+python menu.py
+# Select option: "Install/Setup tool dependencies"
+```
+
+For manual installation of core utilities:
+
 ```bash
 # Activate virtual environment first
 .venv/Scripts/activate  # Windows
 source .venv/bin/activate  # Linux/macOS
 
-# Install specific tool dependencies
-pip install -r requirements_whisper_transcriber.txt
-pip install -r requirements_infinite_differ.txt
-# etc.
+# Install core dependencies
+pip install send2trash>=1.8.0
 ```
 
 ## System Requirements
@@ -133,10 +140,21 @@ LittleTools/
 │   └── whisper_transcriber.py
 ├── TxtTools/             # Text processing tools
 ├── VideoTools/           # Video processing tools
+├── little_tools_utils.py # Common utilities for all tools
+├── requirements.txt      # Core dependencies
 ├── start.ps1             # Windows setup script
 ├── start.bat             # Windows batch wrapper
 └── menu.py               # Main menu system
 ```
+
+## Architecture Changes
+
+LittleTools now uses a unified architecture:
+
+- **Centralized Dependencies**: All tool dependencies are managed in `menu.py`
+- **Common Utilities**: Shared functionality in `little_tools_utils.py`
+- **Safe File Operations**: Files are moved to recycle bin instead of permanent deletion
+- **Cross-platform Compatibility**: Improved support for Windows, macOS, and Linux
 
 ## Getting Help
 

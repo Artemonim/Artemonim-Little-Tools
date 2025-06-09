@@ -39,8 +39,30 @@ The startup scripts will:
 -   🔧 Single virtual environment for all tools
 -   📦 Install only the dependencies you need
 -   🚀 Batch processing for multiple files
--   🧹 Optional source file cleanup after processing
+-   🧹 Safe file deletion (moves to recycle bin/trash)
 -   🎤 Audio/Video transcription with OpenAI Whisper
+-   🛠️ Unified common utilities for all tools
+
+## 🏗️ Architecture
+
+LittleTools uses a unified architecture with shared utilities:
+
+-   **`little_tools_utils.py`**: Common functionality for all tools
+
+    -   Signal handling for graceful interruption (Ctrl+C)
+    -   Safe file deletion (recycle bin/trash)
+    -   Cross-platform compatibility helpers
+    -   Console output formatting
+    -   File and directory operations
+
+-   **`menu.py`**: Central management system
+
+    -   Interactive tool selection
+    -   Dependency management
+    -   Batch processing coordination
+    -   Configuration management
+
+-   **Individual tools**: Focused on their specific functionality while leveraging shared utilities
 
 See [SETUP_README.md](SETUP_README.md) for detailed setup instructions.
 

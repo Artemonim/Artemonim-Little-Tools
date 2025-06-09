@@ -1,3 +1,0 @@
-# Telegram Chats Distiller Dependencies
-# No external Python dependencies required
-# Uses only standard library modules: json, os, sys, signal, argparse 

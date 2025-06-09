@@ -12,7 +12,6 @@ import argparse
 import os
 import sys
 import subprocess
-import signal
 from pathlib import Path
 import whisper # type: ignore
 import ffmpeg # type: ignore
@@ -21,6 +20,14 @@ import tqdm # type: ignore
 from typing import Optional, Tuple # Added for type hinting
 import re
 import time
+
+# * Import common utilities
+sys.path.append(str(Path(__file__).parent.parent))
+from little_tools_utils import (
+    setup_signal_handler, is_interrupted, register_cleanup_function,
+    ensure_dir_exists, check_command_available, safe_delete,
+    format_duration, print_file_info, print_status
+)
 
 # * Increase recursion limit at module level to avoid RecursionError
 sys.setrecursionlimit(10000)
@@ -43,9 +50,6 @@ TEMPERATURE = 0.25
 SUCCESS_SOUND_PATH = SCRIPT_DIR / "Sounds" / "task_complete.opus"
 ERROR_SOUND_PATH = SCRIPT_DIR / "Sounds" / "error.opus"
 
-# * Global variables for interruption handling
-_interrupted = False
-
 # * Global variables for time estimation
 _batch_start_time = None
 _total_audio_seconds_processed = 0.0
@@ -59,20 +63,7 @@ SUPPORTED_EXTENSIONS = [
 
 def check_ffmpeg_availability() -> bool:
     """Checks if ffmpeg is installed and available in PATH."""
-    try:
-        subprocess.run(
-            ["ffmpeg", "-version"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True
-        )
-        return True
-    except (subprocess.CalledProcessError, FileNotFoundError):
-        return False
-
-def ensure_dir_exists(dir_path: Path):
-    """Create directory if it doesn't exist."""
-    dir_path.mkdir(parents=True, exist_ok=True)
+    return check_command_available("ffmpeg")
 
 def play_sound(sound_path: Path):
     """Play a sound file using ffplay."""
@@ -115,22 +106,13 @@ def calculate_estimated_time_remaining() -> str:
     # Estimate remaining time
     estimated_seconds = _total_audio_seconds_remaining / processing_rate
     
-    # Format time as HH:MM:SS or MM:SS
-    if estimated_seconds >= 3600:
-        hours = int(estimated_seconds // 3600)
-        minutes = int((estimated_seconds % 3600) // 60)
-        seconds = int(estimated_seconds % 60)
-        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-    else:
-        minutes = int(estimated_seconds // 60)
-        seconds = int(estimated_seconds % 60)
-        return f"{minutes:02d}:{seconds:02d}"
+    return format_duration(estimated_seconds)
 
 def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int = 1, total_files: int = 1) -> bool:
     """Transcribe a single audio or video file."""
-    global _interrupted, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
+    global _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
     
-    if _interrupted:
+    if is_interrupted():
         return False
     
     print(f"* Processing ({current_file}/{total_files} est. {calculate_estimated_time_remaining()}): {file_path.name}")
@@ -161,7 +143,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
         else:
             audio_to_transcribe = file_path
         
-        if _interrupted:
+        if is_interrupted():
             return False
         
         print(f"  Transcribing with Whisper...")
@@ -212,7 +194,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
         else:
             result = model.transcribe(str(audio_to_transcribe), **transcribe_args)
         
-        if _interrupted:
+        if is_interrupted():
             return False
         
         # Save transcription
@@ -239,12 +221,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
             except Exception:
                 pass
 
-def signal_handler(signum, frame):
-    """Handle interrupt signals gracefully."""
-    global _interrupted
-    print("\n\n! Transcription interrupted by user. Cleaning up...")
-    _interrupted = True
-    sys.exit(0)
+# * Signal handling is now managed by little_tools_utils
 
 def check_existing_output_files(output_dir: Path, files_to_process: list) -> Tuple[str, set]:
     """
@@ -300,7 +277,7 @@ def check_existing_output_files(output_dir: Path, files_to_process: list) -> Tup
 def main():
     """Main function to parse arguments and run transcription."""
     # Set up signal handler for graceful interruption
-    signal.signal(signal.SIGINT, signal_handler)
+    setup_signal_handler()
     
     parser = argparse.ArgumentParser(
         description="Transcribe audio/video files using OpenAI Whisper.",
@@ -466,18 +443,12 @@ def main():
         _total_audio_seconds_remaining += duration
     
     if _total_audio_seconds_remaining > 0:
-        hours = int(_total_audio_seconds_remaining // 3600)
-        minutes = int((_total_audio_seconds_remaining % 3600) // 60)
-        seconds = int(_total_audio_seconds_remaining % 60)
-        if hours > 0:
-            print(f"* Total audio duration: {hours:02d}:{minutes:02d}:{seconds:02d}")
-        else:
-            print(f"* Total audio duration: {minutes:02d}:{seconds:02d}")
+        print(f"* Total audio duration: {format_duration(_total_audio_seconds_remaining)}")
 
     successful_transcriptions = 0
     for current_file_num, file_to_process in enumerate(files_to_process, 1):
         # Check for interruption before processing each file
-        if _interrupted:
+        if is_interrupted():
             print("\n! Processing interrupted by user.")
             break
             
@@ -490,7 +461,7 @@ def main():
     print(f"  Failed transcriptions: {len(files_to_process) - successful_transcriptions}")
     print(f"  Output saved to: {output_dir}")
     
-    if _interrupted:
+    if is_interrupted():
         print("  Status: Interrupted by user")
         play_sound(ERROR_SOUND_PATH)
         sys.exit(130)  # Standard exit code for SIGINT

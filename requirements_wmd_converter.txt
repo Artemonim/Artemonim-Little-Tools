@@ -1,2 +1,0 @@
-# Word-Markdown Converter Dependencies
-pypandoc>=1.13 

@@ -30,6 +30,12 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import signal  # * Better Comments: signal handling for cleanup
 
+# * Import common utilities
+from little_tools_utils import (
+    setup_signal_handler, clear_screen_if_compact, ensure_dir_exists,
+    print_separator, print_status, check_command_available, safe_delete
+)
+
 # * Configuration variables
 SCRIPT_DIR = Path(__file__).parent.absolute()
 VENV_DIR = SCRIPT_DIR / ".venv"
@@ -44,7 +50,7 @@ TOOLS = {
         "description": "Process Telegram chat export JSON files",
         "path": "TxtTools",
         "script": "Telegram_Chats_Distiller.py",
-        "requirements_file": "requirements_telegram_distiller.txt",
+        "requirements": [],  # Uses only standard library modules
         "system_deps": [],
         "supports_batch": True,
         "input_extensions": [".json"],
@@ -57,7 +63,7 @@ TOOLS = {
         "description": "Compare multiple text files simultaneously with GUI",
         "path": "TxtTools/MultipleTextComparator",
         "script": "Infinite_Differ.py",
-        "requirements_file": "requirements_infinite_differ.txt",
+        "requirements": ["PyQt6>=6.4.0"],
         "system_deps": [],
         "supports_batch": False,
         "input_extensions": [".txt", ".md", ".py", ".js", ".html", ".css"],
@@ -70,7 +76,7 @@ TOOLS = {
         "description": "Convert between DOCX and Markdown formats",
         "path": "TxtTools/WMDconverter",
         "script": "WMDconverter.py",
-        "requirements_file": "requirements_wmd_converter.txt",
+        "requirements": ["pypandoc>=1.13"],
         "system_deps": ["pandoc"],
         "supports_batch": True,
         "input_extensions": [".docx", ".md"],
@@ -83,7 +89,7 @@ TOOLS = {
         "description": "Normalize audio tracks in MKV files. Script processes entire input dir.",
         "path": "VideoTools",
         "script": "FFMPEG_MKV_audio_normalizer_v2.py",
-        "requirements_file": "requirements_video_tools.txt",
+        "requirements": [],  # Uses only standard library modules
         "system_deps": ["ffmpeg", "ffprobe"],
         "supports_batch": True,
         "input_extensions": [".mkv"],
@@ -97,7 +103,7 @@ TOOLS = {
         "description": "Dual-input video/audio normalizer and merger",
         "path": "VideoTools",
         "script": "Topaz_Video_Merger.py",
-        "requirements_file": "requirements_video_tools.txt",
+        "requirements": [],  # Uses only standard library modules
         "system_deps": ["ffmpeg", "ffprobe"],
         "supports_batch": False,
         "input_extensions": [".mkv", ".mp4", ".avi"],
@@ -110,7 +116,14 @@ TOOLS = {
         "description": "Transcribe audio/video files using OpenAI Whisper. Processes entire input dir.",
         "path": "Audio-_Video-2-Text",
         "script": "whisper_transcriber.py",
-        "requirements_file": "Audio-_Video-2-Text/requirements_whisper_transcriber.txt",
+        "requirements": [
+            "setuptools>=65.0.0",
+            "wheel>=0.38.0",
+            "torch==2.7.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118",
+            "torchaudio==2.7.0+cu118 --extra-index-url https://download.pytorch.org/whl/cu118",
+            "openai-whisper>=20231117",
+            "ffmpeg-python>=0.2.0"
+        ],
         "system_deps": ["ffmpeg"],
         "supports_batch": True,
         "batch_takes_dir_input": True,
@@ -164,10 +177,7 @@ def _rollback_current_installation():
 
 signal.signal(signal.SIGINT, _signal_handler)
 
-def clear_screen_if_compact(is_compact: bool):
-    """Clears the terminal screen if compact mode is enabled."""
-    if is_compact:
-        os.system('cls' if platform.system() == "Windows" else 'clear')
+# * clear_screen_if_compact is now imported from little_tools_utils
 
 
 class ToolManager:
@@ -207,8 +217,8 @@ class ToolManager:
             print(f"! Warning: Could not save config: {e}")
     
     def ensure_directories(self):
-        INPUT_DIR.mkdir(exist_ok=True)
-        OUTPUT_DIR.mkdir(exist_ok=True)
+        ensure_dir_exists(INPUT_DIR)
+        ensure_dir_exists(OUTPUT_DIR)
     
     def initialize_default_tools(self):
         for tool_id, tool in TOOLS.items():
@@ -226,23 +236,7 @@ class ToolManager:
             return False
     
     def check_system_dependency(self, dep_name: str) -> bool:
-        try:
-            result = subprocess.run([dep_name, "--version"], capture_output=True, check=False, text=True)
-            if result.returncode == 0: return True
-            result = subprocess.run([dep_name, "-version"], capture_output=True, check=False, text=True)
-            if result.returncode == 0: return True
-            subprocess.run([dep_name], capture_output=True, check=False, text=True)
-            return True 
-        except FileNotFoundError:
-            if platform.system() == "Windows":
-                try:
-                    result = subprocess.run([f"{dep_name}.exe", "--version"], capture_output=True, check=False, text=True)
-                    return result.returncode == 0
-                except FileNotFoundError: pass
-            return False
-        except subprocess.CalledProcessError: 
-             return True 
-        return False
+        return check_command_available(dep_name)
 
     def check_all_system_dependencies(self, tool_id: str) -> bool:
         tool = TOOLS[tool_id]
@@ -318,18 +312,13 @@ class ToolManager:
                      self.save_config()
             return True
         
-        requirements_path = SCRIPT_DIR / tool["requirements_file"]
-        if not requirements_path.exists():
-            print(f"! Requirements file not found: {requirements_path}")
-            return False
-        
-        with open(requirements_path, 'r', encoding='utf-8') as f:
-            if not any(line.strip() and not line.strip().startswith('#') for line in f):
-                if tool_id not in self.config["installed_tools"]:
-                     if self.check_all_system_dependencies(tool_id):
-                        self.config["installed_tools"].append(tool_id)
-                        self.save_config()
-                return True
+        requirements = tool["requirements"]
+        if not requirements:
+            if tool_id not in self.config["installed_tools"]:
+                 if self.check_all_system_dependencies(tool_id):
+                    self.config["installed_tools"].append(tool_id)
+                    self.save_config()
+            return True
         
         if not self.create_venv(): 
             return False
@@ -362,61 +351,37 @@ class ToolManager:
                 print(f"! Warning: Failed to upgrade build tools: {e.stderr if e.stderr else e.stdout}")
                 print("  Continuing with installation anyway...")
             
-            # GPU-only specialized installation for Whisper Transcriber
-            if tool_id == 'whisper_transcriber':
-                try:
-                    print(f"* Installing GPU PyTorch for {tool['name']}...")
-                    subprocess.run([
-                        python_exe, "-m", "pip", "install", "--no-cache-dir",
-                        "torch==2.7.0+cu118", "torchaudio==2.7.0+cu118",
-                        "--extra-index-url", "https://download.pytorch.org/whl/cu118"
-                    ], check=True, text=True, capture_output=True)
-                    _current_installation["packages_installed"].extend(["torch", "torchaudio"])
-                    
-                    print(f"* Installing openai-whisper from GitHub for {tool['name']} (temporary workaround)...")
-                    subprocess.run([
-                        python_exe, "-m", "pip", "install", "--no-cache-dir", "git+https://github.com/openai/whisper.git"
-                    ], check=True, text=True, capture_output=True)
-                    _current_installation["packages_installed"].append("openai-whisper")
-                    
-                    print(f"* Installing ffmpeg-python for {tool['name']}...")
-                    subprocess.run([
-                        python_exe, "-m", "pip", "install", "--no-cache-dir", "ffmpeg-python>=0.2.0"
-                    ], check=True, text=True, capture_output=True)
-                    _current_installation["packages_installed"].append("ffmpeg-python")
-                    
-                    print(f"* Dependencies installed successfully for {tool['name']}.")
-                    if tool_id not in self.config["installed_tools"]:
-                        self.config["installed_tools"].append(tool_id)
-                        self.save_config()
-                    
-                    # Clear tracking on success
-                    _current_installation["in_progress"] = False
-                    _current_installation["packages_installed"].clear()
-                    return True
-                except subprocess.CalledProcessError as e:
-                    print(f"! Failed GPU-specialized install for {tool['name']}: {e.stderr.strip() if e.stderr else e.stdout.strip()}")
-                    print("  Rolling back installed packages...")
-                    _rollback_current_installation()
-                    return False
-            
-            # Generic install via requirements file
-            print(f"* Installing dependencies for {tool['name']} from {tool['requirements_file']}...")
-            
-            # Parse requirements to track individual packages
-            with open(requirements_path, 'r', encoding='utf-8') as f:
-                requirements_lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+            # Install each requirement
+            print(f"* Installing dependencies for {tool['name']}...")
             
             # Extract package names for tracking
-            for req_line in requirements_lines:
+            for req_line in requirements:
                 # Extract package name (before ==, >=, etc.)
-                package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].strip()
-                if package_name:
+                package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].split()[0].strip()
+                if package_name and not package_name.startswith('-'):
                     _current_installation["packages_installed"].append(package_name)
             
-            # Prepare pip install command
-            install_cmd = [python_exe, "-m", "pip", "install", "--no-cache-dir", "-r", str(requirements_path)]
-            subprocess.run(install_cmd, check=True, text=True, capture_output=True)
+            # Install packages one by one to handle special cases like extra-index-url
+            for requirement in requirements:
+                if "--extra-index-url" in requirement:
+                    # Handle PyTorch-style requirements with extra index URLs
+                    parts = requirement.split()
+                    package_spec = parts[0]
+                    extra_index_url = None
+                    if "--extra-index-url" in parts:
+                        idx = parts.index("--extra-index-url")
+                        if idx + 1 < len(parts):
+                            extra_index_url = parts[idx + 1]
+                    
+                    install_cmd = [python_exe, "-m", "pip", "install", "--no-cache-dir"]
+                    if extra_index_url:
+                        install_cmd.extend(["--extra-index-url", extra_index_url])
+                    install_cmd.append(package_spec)
+                else:
+                    install_cmd = [python_exe, "-m", "pip", "install", "--no-cache-dir", requirement]
+                
+                subprocess.run(install_cmd, check=True, text=True, capture_output=True)
+            
             print(f"* Dependencies installed successfully for {tool['name']}.")
             if tool_id not in self.config["installed_tools"]:
                 self.config["installed_tools"].append(tool_id)
@@ -472,12 +437,18 @@ class ToolManager:
             self.save_config()
             return True
         
-        # Get packages to uninstall based on tool
+        # Get packages to uninstall based on tool requirements
         packages_to_uninstall = []
+        requirements = tool["requirements"]
+        
+        for req_line in requirements:
+            # Extract package name (before ==, >=, etc.)
+            package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].split()[0].strip()
+            if package_name and not package_name.startswith('-'):
+                packages_to_uninstall.append(package_name)
+        
+        # Special handling for Whisper Transcriber models directory
         if tool_id == 'whisper_transcriber':
-            packages_to_uninstall = ["torch", "torchaudio", "openai-whisper", "ffmpeg-python"]
-            
-            # Also remove Whisper models directory if it exists
             models_dir = SCRIPT_DIR / "Audio-_Video-2-Text" / "models"
             if models_dir.exists():
                 try:
@@ -485,18 +456,6 @@ class ToolManager:
                     print(f"  ✓ Removed Whisper models directory: {models_dir}")
                 except Exception as e:
                     print(f"  ! Warning: Could not remove models directory '{models_dir}': {e}")
-        else:
-            # Parse requirements file to get package names
-            requirements_path = SCRIPT_DIR / tool["requirements_file"]
-            if requirements_path.exists():
-                with open(requirements_path, 'r', encoding='utf-8') as f:
-                    requirements_lines = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
-                
-                for req_line in requirements_lines:
-                    # Extract package name (before ==, >=, etc.)
-                    package_name = req_line.split('==')[0].split('>=')[0].split('<=')[0].split('>')[0].split('<')[0].split('!')[0].strip()
-                    if package_name:
-                        packages_to_uninstall.append(package_name)
         
         if not packages_to_uninstall:
             print(f"* No packages identified for uninstallation for {tool['name']}.")

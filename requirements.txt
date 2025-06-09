@@ -1,6 +1,9 @@
 # LittleTools Dependencies
 # Install only what you need for the tools you use
 
+# Core Dependencies (shared utilities)
+send2trash>=1.8.0
+
 # Text Tools Dependencies
 # For Infinite Differ (Multiple Text Comparator)
 PyQt6>=6.4.0

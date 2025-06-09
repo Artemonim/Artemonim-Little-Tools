@@ -15,7 +15,6 @@ This module provides shared functionality for:
 
 import os
 import asyncio
-import signal
 import json
 import platform
 import time
@@ -24,6 +23,14 @@ import re
 from collections import defaultdict
 from pathlib import Path
 import subprocess
+
+# * Import common utilities
+sys.path.append(str(Path(__file__).parent.parent))
+from little_tools_utils import (
+    print_separator, print_file_info, ensure_dir_exists,
+    clean_partial_output, check_file_exists_with_overwrite,
+    format_duration
+)
 
 # * Configuration variables with defaults
 DEFAULT_THREAD_LIMIT = 2
@@ -99,7 +106,7 @@ class ProcessingStats:
         print(f"Успешно обработано: {processed}")
         print(f"Пропущено: {skipped}")
         print(f"Ошибок: {failed}")
-        print(f"Затраченное время: {elapsed:.2f} секунд")
+        print(f"Затраченное время: {format_duration(elapsed)}")
         print_separator()
 
 def get_max_workers(manual_limit=DEFAULT_THREAD_LIMIT):
@@ -115,22 +122,7 @@ def get_max_workers(manual_limit=DEFAULT_THREAD_LIMIT):
     cpu_count = os.cpu_count() or manual_limit
     return max(cpu_count // AUTO_THREAD_LIMIT_DIVIDER, manual_limit)
 
-# Console output functions
-def print_separator():
-    """Prints a separator line for better console output readability."""
-    print("\n" + "═" * 50 + "\n")
-
-def print_file_info(filename, current, total):
-    """
-    Prints information about the file being processed.
-    
-    Args:
-        filename: Name of the file being processed
-        current: Current file number
-        total: Total number of files to process
-    """
-    print(f"[{current}/{total}] {filename}")
-
+# Console output functions (some now imported from little_tools_utils)
 def print_final_stats(stats, start_time):
     """
     Prints final processing statistics.
@@ -146,7 +138,7 @@ def print_final_stats(stats, start_time):
     print(f"Успешно обработано: {stats['processed']}")
     print(f"Пропущено: {stats['skipped']}")
     print(f"Ошибок: {stats['errors']}")
-    print(f"Затраченное время: {duration:.2f} секунд")
+    print(f"Затраченное время: {format_duration(duration)}")
     print_separator()
 
 # File and path handling
@@ -170,6 +162,7 @@ def get_mkv_files_from_path(path):
     else:
         raise ValueError(f"{path} не является директорией или MKV файлом")
 
+# File handling functions (now using little_tools_utils)
 def check_output_file_exists(output_path, overwrite=False):
     """
     Check if output file exists and handle based on overwrite setting.
@@ -181,47 +174,9 @@ def check_output_file_exists(output_path, overwrite=False):
     Returns:
         bool: True if file should be skipped, False otherwise
     """
-    if os.path.exists(output_path):
-        if overwrite:
-            print(f"Файл существует, перезаписываем: {os.path.basename(output_path)}")
-            return False
-        else:
-            print(f"Файл существует, пропускаем: {os.path.basename(output_path)}")
-            return True
-    return False
+    return check_file_exists_with_overwrite(output_path, overwrite)
 
-def clean_partial_output(output_path):
-    """
-    Delete a partially processed output file.
-    
-    Args:
-        output_path: Path to the output file
-        
-    Returns:
-        bool: True if file was deleted, False otherwise
-    """
-    if not os.path.exists(output_path):
-        return False
-
-    # * Try up to 3 times with a short delay between attempts
-    max_attempts = 3
-    for attempt in range(max_attempts):
-        try:
-            os.remove(output_path)
-            print(f"Удален незавершенный файл: {os.path.basename(output_path)}")
-            return True
-        except PermissionError as e:
-            # File might be locked by another process
-            if attempt < max_attempts - 1:
-                # Wait before retry
-                time.sleep(1)
-            else:
-                print(f"Ошибка при удалении файла {output_path}: {str(e)}")
-        except Exception as e:
-            print(f"Ошибка при удалении файла {output_path}: {str(e)}")
-            break
-    
-    return False
+# clean_partial_output is now imported from little_tools_utils
 
 # FFmpeg utilities
 async def get_audio_tracks(input_path, verbose=False):
@@ -521,7 +476,7 @@ async def create_output_dir(path):
     Args:
         path: Directory path to create
     """
-    os.makedirs(path, exist_ok=True)
+    ensure_dir_exists(path)
 
 async def status_updater(stats, stop_event):
     """

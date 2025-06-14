@@ -108,7 +108,14 @@ def calculate_estimated_time_remaining() -> str:
     
     return format_duration(estimated_seconds)
 
-def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int = 1, total_files: int = 1) -> bool:
+def format_timestamp(seconds: float) -> str:
+    """Format seconds as HH:MM:SS.fff timestamp."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    seconds = seconds % 60
+    return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
+
+def transcribe_file(file_path: Path, model, output_dir: Path, output_format: str = "text", current_file: int = 1, total_files: int = 1) -> bool:
     """Transcribe a single audio or video file."""
     global _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
     
@@ -197,10 +204,21 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
         if is_interrupted():
             return False
         
-        # Save transcription
-        output_file = output_dir / f"{file_path.stem}_transcription.txt"
-        with open(output_file, 'w', encoding='utf-8') as f:
-            f.write(result['text'])
+        # Save transcription based on output format
+        if output_format == "text":
+            output_file = output_dir / f"{file_path.stem}_transcription.txt"
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(result['text'])
+        elif output_format == "timestamped":
+            output_file = output_dir / f"{file_path.stem}_transcription_timestamped.txt"
+            with open(output_file, 'w', encoding='utf-8') as f:
+                for segment in result['segments']:
+                    start_time = format_timestamp(segment['start'])
+                    end_time = format_timestamp(segment['end'])
+                    text = segment['text'].strip()
+                    f.write(f"[{start_time} --> {end_time}] {text}\n")
+        else:
+            raise ValueError(f"Unsupported output format: {output_format}")
         
         print(f"  ✓ Transcription saved to: {output_file.name}")
         
@@ -223,13 +241,14 @@ def transcribe_file(file_path: Path, model, output_dir: Path, current_file: int 
 
 # * Signal handling is now managed by little_tools_utils
 
-def check_existing_output_files(output_dir: Path, files_to_process: list) -> Tuple[str, set]:
+def check_existing_output_files(output_dir: Path, files_to_process: list, output_format: str = "text") -> Tuple[str, set]:
     """
     Check if output files already exist and ask user for confirmation.
     
     Args:
         output_dir: Output directory path
         files_to_process: List of input files to be processed
+        output_format: Output format ("text" or "timestamped")
         
     Returns:
         Tuple of (action, files_to_skip_set) where:
@@ -240,7 +259,11 @@ def check_existing_output_files(output_dir: Path, files_to_process: list) -> Tup
     files_with_existing_output = set()
     
     for input_file in files_to_process:
-        output_file = output_dir / f"{input_file.stem}_transcription.txt"
+        if output_format == "text":
+            output_file = output_dir / f"{input_file.stem}_transcription.txt"
+        else:  # timestamped
+            output_file = output_dir / f"{input_file.stem}_transcription_timestamped.txt"
+        
         if output_file.exists():
             existing_files.append(output_file.name)
             files_with_existing_output.add(input_file)
@@ -329,6 +352,13 @@ def main():
         default=TEMPERATURE,
         help=f"Temperature for sampling (0.0 to 1.0). Higher values make output more random (default: {TEMPERATURE})."
     )
+    parser.add_argument(
+        "--format",
+        type=str,
+        default="text",
+        choices=["text", "timestamped"],
+        help="Output format: 'text' for plain text, 'timestamped' for text with timestamps (default: text)."
+    )
 
     args = parser.parse_args()
 
@@ -377,6 +407,7 @@ def main():
     print(f"* Model download directory: {model_root_path}")
     print(f"* Input path: {input_path}")
     print(f"* Output directory: {output_dir}")
+    print(f"* Output format: {args.format}")
     print("* GPU acceleration: Enabled")
     if args.language:
         print(f"* Language: {args.language}")
@@ -408,7 +439,7 @@ def main():
     print(f"* Found {len(files_to_process)} file(s) to process.")
 
     # Check for existing output files and ask for confirmation
-    overwrite_action, files_to_skip = check_existing_output_files(output_dir, files_to_process)
+    overwrite_action, files_to_skip = check_existing_output_files(output_dir, files_to_process, args.format)
     if overwrite_action == 'cancel':
         print("* Operation cancelled by user.")
         play_sound(ERROR_SOUND_PATH)
@@ -452,7 +483,7 @@ def main():
             print("\n! Processing interrupted by user.")
             break
             
-        if transcribe_file(file_to_process, model, output_dir, current_file_num, len(files_to_process)):
+        if transcribe_file(file_to_process, model, output_dir, args.format, current_file_num, len(files_to_process)):
             successful_transcriptions += 1
 
     print(f'\n--- Transcription Summary ---')

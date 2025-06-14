@@ -129,8 +129,9 @@ TOOLS = {
         "batch_takes_dir_input": True,
         "input_extensions": [".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac", ".mp4", ".mkv", ".mov", ".avi", ".webm"],
         "output_extension": ".txt",
-        "args_template": ["-i", "{input_dir}", "-o", "{output_dir}", "--model", "large-v3-turbo"],
-        "needs_dependencies": True
+        "args_template": ["-i", "{input_dir}", "-o", "{output_dir}", "--model", "large-v3-turbo", "--format", "{output_format}"],
+        "needs_dependencies": True,
+        "supports_format_selection": True
     }
 }
 
@@ -548,16 +549,29 @@ class ToolManager:
         
         if tool.get("batch_takes_dir_input", False):
             print(f"* Running {tool['name']} (processes entire input directory via its own logic)...")
+            
+            # Ask for output format if tool supports it
+            output_format = "text"  # Default
+            if tool.get("supports_format_selection"):
+                output_format = ask_output_format(tool_id)
+                print(f"* Selected output format: {output_format}")
+            
             script_path = SCRIPT_DIR / tool["path"] / tool["script"]
             if not script_path.exists():
                 print(f"! Script {script_path.name} not found.")
                 return False, self.post_execution_menu(tool_id, False)
             
             python_exe = self.get_venv_python() or sys.executable
-            processed_args = [ \
-                    str(INPUT_DIR) if a == "{input_dir}" else \
-                    str(OUTPUT_DIR) if a == "{output_dir}" else \
-                    a for a in tool["args_template"]]
+            processed_args = []
+            for a in tool["args_template"]:
+                if a == "{input_dir}":
+                    processed_args.append(str(INPUT_DIR))
+                elif a == "{output_dir}":
+                    processed_args.append(str(OUTPUT_DIR))
+                elif a == "{output_format}":
+                    processed_args.append(output_format)
+                else:
+                    processed_args.append(a)
             
             cmd = [python_exe, str(script_path)] + processed_args
             print(f"* Executing: {' '.join(cmd)}")
@@ -705,6 +719,14 @@ class ToolManager:
             
             if template_part.startswith("{") and template_part.endswith("}"):
                 placeholder = template_part[1:-1]
+                
+                if placeholder == "output_format" and tool.get("supports_format_selection"):
+                    # Special handling for output format selection
+                    format_choice = ask_output_format(tool_id)
+                    final_args.append(format_choice)
+                    idx += 1
+                    continue
+                
                 prompt = f"  Enter value for '{placeholder}'"
                 default_value_info = ""
 
@@ -861,6 +883,28 @@ def select_single_tool_for_action(manager: ToolManager, action_description: str)
         for i, tool_id in enumerate(tool_ids, 1): print(f"  {i:2d}. {TOOLS[tool_id]['name']}")
         print("  0. Cancel / Back to Main Menu")
 
+
+def ask_output_format(tool_id: str) -> str:
+    """Ask user to select output format for tools that support it."""
+    tool = TOOLS[tool_id]
+    if not tool.get("supports_format_selection"):
+        return "text"  # Default format for tools that don't support selection
+    
+    print("\nSelect output format:")
+    print("  1. Plain text (continuous text without timestamps)")
+    print("  2. Timestamped text (text with timing information)")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1/2): ").strip()
+            if choice == '1':
+                return "text"
+            elif choice == '2':
+                return "timestamped"
+            else:
+                print("! Invalid choice. Please enter '1' or '2'.")
+        except KeyboardInterrupt:
+            return "text"  # Default on interrupt
 
 def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
     tool = TOOLS[tool_id]

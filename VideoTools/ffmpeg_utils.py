@@ -23,6 +23,8 @@ import re
 from collections import defaultdict
 from pathlib import Path
 import subprocess
+import signal
+from typing import Optional
 
 # * Import common utilities
 sys.path.append(str(Path(__file__).parent.parent))
@@ -290,7 +292,8 @@ def get_metadata_options(audio_tracks, verbose=False):
     return metadata_options
 
 async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False, 
-                             output_path=None, file_position=None, file_count=None, filename=None):
+                             output_path=None, file_position=None, file_count=None, filename=None,
+                             total_duration=None):
     """
     Run an FFmpeg command and handle errors.
     
@@ -298,80 +301,88 @@ async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False
         cmd: List containing the FFmpeg command and arguments
         stats: Optional ProcessingStats object to update
         stats_key: Key to increment in stats on success
-        quiet: Whether to suppress progress output
+        quiet: Whether to suppress progress output (progress bar still shows)
         output_path: Path to the output file (for cleaning up on cancel)
         file_position: Current file number
         file_count: Total number of files
         filename: Name of the file being processed
+        total_duration: Total duration of the media file in seconds (for progress bar).
         
     Returns:
         bool: True if command succeeded, False otherwise
     """
-    # Filter empty strings
     cmd = [arg for arg in cmd if arg]
-    
+    proc = None
     try:
-        # Generate a unique task ID if filename is provided
-        task_id = f"Task-{file_position}" if file_position else f"Task-{id(cmd)}"
-        
-        # Update initial status if stats object is provided
-        if stats and filename:
-            stats.update_task_status(task_id, f"Начало обработки {filename}")
-        
-        # Start FFmpeg process with pipe for stderr to capture output
         proc = await asyncio.create_subprocess_exec(
             *cmd,
-            stderr=asyncio.subprocess.PIPE if quiet else None  # Only pipe stderr if in quiet mode
+            stderr=asyncio.subprocess.PIPE
         )
-        
-        # Register process if stats object is provided
         if stats:
             stats.register_process(proc)
+
+        stderr_output = []
+        buffer = ""
+        time_pattern = re.compile(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})")
+        speed_pattern = re.compile(r"speed=\s*(\d+\.?\d*)x")
         
-        # Process stderr output line by line in quiet mode
-        if quiet:
-            time_pattern = re.compile(r"time=\s*(\d+:\d+:\d+\.\d+)")
-            speed_pattern = re.compile(r"speed=\s*(\d+\.\d+)x")
+        file_prefix = ""
+        if file_position and file_count and filename:
+            file_prefix = f"[{file_position}/{file_count}] {filename} "
+
+        while True:
+            # Break loop if process has exited
+            if proc.returncode is not None:
+                break
             
-            # Pre-format the permanent part of the progress line
-            file_prefix = ""
-            if file_position and file_count and filename:
-                file_prefix = f"[{file_position}/{file_count}] {filename} "
-            
-            async for line in proc.stderr:
-                line_text = line.decode('utf-8', errors='replace').strip()
+            try:
+                # Read chunk with a timeout to avoid blocking forever
+                chunk = await asyncio.wait_for(proc.stderr.read(1024), timeout=2.0)
+                if not chunk:
+                    break  # End of stream
+            except asyncio.TimeoutError:
+                continue # Check proc.returncode again
+
+            buffer += chunk.decode('utf-8', errors='replace')
+            # FFmpeg uses \r to update progress line
+            lines = buffer.split('\r')
+            buffer = lines.pop() # Keep potentially incomplete line part in buffer
+
+            for line_text in lines:
+                if not line_text:
+                    continue
                 
-                # Only process progress lines (lines with "time=")
+                line_to_log = line_text.strip()
+                if line_to_log:
+                    stderr_output.append(line_to_log)
+
                 if "time=" in line_text:
-                    # Extract time and speed
                     time_match = time_pattern.search(line_text)
                     speed_match = speed_pattern.search(line_text)
                     
-                    if time_match:
-                        timecode = time_match.group(1)
-                        speed = speed_match.group(1) if speed_match else "?"
+                    if time_match and total_duration and total_duration > 0:
+                        hours, minutes, seconds, hundredths = map(int, time_match.groups())
+                        current_seconds = hours * 3600 + minutes * 60 + seconds + hundredths / 100
+                        speed = float(speed_match.group(1)) if speed_match and float(speed_match.group(1)) > 0 else 1.0
+                        progress_percent = (current_seconds / total_duration) * 100
+                        eta_seconds = (total_duration - current_seconds) / speed if speed > 0 else 0
                         
-                        # Simple direct output to last terminal line - legacy style
-                        # Clear more space (200 chars) to ensure visibility
-                        progress_line = f"\r{' ' * 200}\r{file_prefix}{timecode} speed={speed}x"
+                        bar_length = 30
+                        filled_len = int(bar_length * progress_percent / 100)
+                        bar = '█' * filled_len + '-' * (bar_length - filled_len)
                         
-                        # Force immediate output without buffering
+                        progress_line = (
+                            f"\r{file_prefix}{bar} {progress_percent:.1f}% | "
+                            f"Speed: {speed:.1f}x | ETA: {format_duration(eta_seconds)}  "
+                        )
                         sys.stdout.write(progress_line)
                         sys.stdout.flush()
-        else:
-            # In legacy style, output goes directly to terminal
-            await proc.communicate()
+
+        await proc.wait()
+
+        sys.stdout.write("\r" + " " * 120 + "\r")
+        sys.stdout.flush()
         
-        # Clear the line when finished in quiet mode
-        if quiet:
-            sys.stdout.write("\r" + " " * 100 + "\r")
-            sys.stdout.flush()
-        
-        # Remove process from tracked processes
-        if stats:
-            stats.remove_process(proc)
-        
-        # Check return code
         if proc.returncode == 0:
             if stats:
                 stats.increment(stats_key)
@@ -379,27 +390,57 @@ async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False
         else:
             if stats and not stats.interrupted:
                 stats.increment("errors")
+            print(f"\n--- FFmpeg Error Output for {filename} ---")
+            # Print last 15 lines of stderr for diagnosis
+            for line in stderr_output[-15:]:
+                print(line)
+            print("------------------------------------------")
             return False
+
     except asyncio.CancelledError:
-        # Clean up partial output file if needed
         if output_path:
             clean_partial_output(output_path)
-        
-        # Remove process from tracking
-        if stats and 'proc' in locals():
-            stats.remove_process(proc)
-        
         raise
     except Exception as e:
+        print(f"\n! Exception while running command for {filename}: {e}")
         if stats and not stats.interrupted:
             stats.increment("errors")
-        print(f"Исключение при выполнении команды: {str(e)}")
-        
-        # Remove process from tracking
-        if stats and 'proc' in locals():
-            stats.remove_process(proc)
-        
         return False
+    finally:
+        if proc and proc.returncode is None:
+            try:
+                proc.terminate()
+                await proc.wait()
+            except ProcessLookupError:
+                pass # Process already finished
+        if stats and proc:
+            stats.remove_process(proc)
+
+async def get_video_duration(input_path: str) -> Optional[float]:
+    """Get video duration in seconds using ffprobe."""
+    ffprobe_cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-show_entries", "format=duration",
+        "-of", "default=noprint_wrappers=1:nokey=1",
+        str(input_path)
+    ]
+    proc = None
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ffprobe_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0 and stdout:
+            return float(stdout.decode().strip())
+        else:
+            print(f"! ffprobe error getting duration for {Path(input_path).name}: {stderr.decode()}")
+            return None
+    except Exception as e:
+        print(f"! Exception getting duration for {Path(input_path).name}: {e}")
+        return None
 
 # Async task and signal handling
 def setup_signal_handlers(loop, stop_event, tasks, stats=None):
@@ -501,7 +542,7 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
     
     Args:
         args: Parsed command-line arguments
-        process_func: Function to process files
+        process_func: Function to process files, which should accept (args, stats, stop_event)
         output_folder: Default output folder path
         
     Returns:
@@ -515,7 +556,8 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
     # Create task
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
-    main_task = asyncio.create_task(process_func(args, stats))
+    # Pass stop_event to the processing function
+    main_task = asyncio.create_task(process_func(args, stats, stop_event))
     
     # * Create status updater task
     status_task = asyncio.create_task(status_updater(stats, stop_event))
@@ -532,7 +574,9 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
         print("\nЗадача отменена")
     finally:
         # Signal status updater to stop
-        stop_event.set()
+        if not stop_event.is_set():
+            stop_event.set()
+        
         # Wait for status updater to stop
         if not status_task.done():
             try:
@@ -544,4 +588,46 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
     
     # Print results
     stats.print_stats()
-    return stats 
+    return stats
+
+async def run_tasks_with_semaphore(tasks, stats, stop_event):
+    """
+    Run tasks with a semaphore to limit concurrency.
+    
+    Args:
+        tasks: A list of awaitable tasks to run.
+        stats: ProcessingStats object.
+        stop_event: Event to signal task termination.
+    """
+    # * Force single-file processing for GPU tasks to avoid resource contention.
+    limit = 1
+    semaphore = asyncio.Semaphore(limit)
+    
+    print(f"* Concurrency limit set to {limit} to avoid GPU contention.")
+    
+    async def run_task(task):
+        # Wait for the stop event before starting a new task
+        if stop_event.is_set():
+            return
+            
+        async with semaphore:
+            if not stop_event.is_set():
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass # Task cancellation is expected on interrupt
+    
+    # Create a future to await all tasks
+    all_tasks_future = asyncio.gather(*(run_task(task) for task in tasks))
+    
+    try:
+        await all_tasks_future
+    except asyncio.CancelledError:
+        # This is expected if the main task is cancelled.
+        # Ensure all sub-tasks are also cancelled.
+        all_tasks_future.cancel()
+        await asyncio.sleep(0.1) # Give a moment for cancellations to propagate
+    finally:
+        # Ensure the semaphore is released if main task is cancelled
+        # This is handled by context manager, but as a safeguard.
+        pass 

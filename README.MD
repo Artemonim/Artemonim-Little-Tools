@@ -201,6 +201,28 @@ A dual-input video/audio normalizer and merger. This tool combines two video or 
 python VideoTools/Topaz_Video_Merger.py -i1 <primary_input_file> -i2 <secondary_input_file> -o <output_directory>
 ```
 
+### Video Converter
+
+Re-encodes videos with HEVC (Nvidia NVENC) with quality and FPS options.
+
+**Features:**
+
+-   Re-encodes videos using HEVC (Nvidia NVENC).
+-   Allows user to select quality presets (Master, Normal, Compact).
+-   Allows user to select FPS (original, 30, 60, 120).
+-   Processes all compatible video files from an input directory to an output directory.
+-   Single-file processing on GPU to avoid resource contention.
+
+**Dependencies:**
+
+-   ffmpeg (system dependency)
+
+**Usage:**
+
+```bash
+python VideoTools/video_converter.py [options]
+```
+
 ## Utility Tools
 
 ### Requirements Builder

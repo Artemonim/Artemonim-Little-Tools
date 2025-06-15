@@ -132,6 +132,28 @@ TOOLS = {
         "args_template": ["-i", "{input_dir}", "-o", "{output_dir}", "--model", "large-v3-turbo", "--format", "{output_format}"],
         "needs_dependencies": True,
         "supports_format_selection": True
+    },
+    "video_converter": {
+        "name": "Video Converter",
+        "description": "Re-encode videos with HEVC (NVENC) with quality and FPS options.",
+        "path": "VideoTools",
+        "script": "video_converter.py",
+        "requirements": [],
+        "system_deps": ["ffmpeg"],
+        "supports_batch": True,
+        "batch_takes_dir_input": True,
+        "input_extensions": [".mp4", ".mkv", ".mov", ".avi", ".webm"],
+        "output_extension": "_converted.mp4",
+        "args_template": [
+            "-i", "{input_dir}", 
+            "-o", "{output_dir}", 
+            "--quality", "{quality}", 
+            "--fps", "{fps}",
+            "--overwrite"
+        ],
+        "needs_dependencies": False,
+        "supports_quality_selection": True,
+        "supports_fps_selection": True
     }
 }
 
@@ -492,6 +514,15 @@ class ToolManager:
         sys_deps_met = self.check_all_system_dependencies(tool_id)
         return py_deps_met and sys_deps_met
     
+    def get_output_path_for_input(self, input_file: Path, tool_id: str) -> Optional[Path]:
+        """Determine the default output path for a given input file and tool."""
+        tool = TOOLS[tool_id]
+        if tool.get("output_extension"):
+            return OUTPUT_DIR / f"{input_file.stem}{tool['output_extension']}"
+        elif tool_id == "wmd_converter":
+             return OUTPUT_DIR / f"{input_file.stem}{'.md' if input_file.suffix.lower() == '.docx' else '.docx'}"
+        return None
+
     def get_input_files(self, tool_id: str) -> List[Path]:
         tool = TOOLS[tool_id]
         return sorted([Path(f) for ext in tool["input_extensions"] for f in glob.glob(str(INPUT_DIR / f"*{ext}"))])
@@ -550,12 +581,46 @@ class ToolManager:
         if tool.get("batch_takes_dir_input", False):
             print(f"* Running {tool['name']} (processes entire input directory via its own logic)...")
             
+            # --- Overwrite Logic ---
+            should_ask_overwrite = False
+            # For tools that take dir input, we can't predict output files easily.
+            # A simple check is to see if the output dir has ANY files from a previous run.
+            # A more specific check for whisper:
+            if tool_id == 'whisper_transcriber':
+                if any(OUTPUT_DIR.glob('*.txt')) or any(OUTPUT_DIR.glob('*.json')):
+                    should_ask_overwrite = True
+            elif tool_id == 'video_converter':
+                 if any(OUTPUT_DIR.glob('*_converted.mp4')):
+                     should_ask_overwrite = True
+            else: # Generic check for other dir-based tools
+                if any(OUTPUT_DIR.iterdir()):
+                    should_ask_overwrite = True
+
+            do_overwrite = False
+            if should_ask_overwrite:
+                overwrite_choice = input("  Output directory is not empty. Overwrite existing files? (y/N): ").strip().lower()
+                if overwrite_choice == 'y':
+                    do_overwrite = True
+            # --- End Overwrite Logic ---
+
             # Ask for output format if tool supports it
             output_format = "text"  # Default
             if tool.get("supports_format_selection"):
                 output_format = ask_output_format(tool_id)
                 print(f"* Selected output format: {output_format}")
             
+            # Ask for quality if tool supports it
+            quality = "26" # Default
+            if tool.get("supports_quality_selection"):
+                quality = ask_quality()
+                print(f"* Selected quality (CQ): {quality}")
+
+            # Ask for FPS if tool supports it
+            fps = "original" # Default
+            if tool.get("supports_fps_selection"):
+                fps = ask_fps()
+                print(f"* Selected FPS: {fps}")
+
             script_path = SCRIPT_DIR / tool["path"] / tool["script"]
             if not script_path.exists():
                 print(f"! Script {script_path.name} not found.")
@@ -570,6 +635,13 @@ class ToolManager:
                     processed_args.append(str(OUTPUT_DIR))
                 elif a == "{output_format}":
                     processed_args.append(output_format)
+                elif a == "{quality}":
+                    processed_args.append(quality)
+                elif a == "{fps}":
+                    processed_args.append(fps)
+                elif a == "--overwrite":
+                    if do_overwrite:
+                        processed_args.append(a)
                 else:
                     processed_args.append(a)
             
@@ -727,6 +799,18 @@ class ToolManager:
                     idx += 1
                     continue
                 
+                if placeholder == "quality" and tool.get("supports_quality_selection"):
+                    quality_choice = ask_quality()
+                    final_args.append(quality_choice)
+                    idx += 1
+                    continue
+                    
+                if placeholder == "fps" and tool.get("supports_fps_selection"):
+                    fps_choice = ask_fps()
+                    final_args.append(fps_choice)
+                    idx += 1
+                    continue
+
                 prompt = f"  Enter value for '{placeholder}'"
                 default_value_info = ""
 
@@ -759,6 +843,14 @@ class ToolManager:
                 final_args.append(user_value)
                 idx += 1
             else: 
+                # Handle standalone flags like --overwrite
+                if template_part == "--overwrite":
+                    overwrite_choice = input(f"  Enable '{template_part}' flag? (y/N): ").strip().lower()
+                    if overwrite_choice == 'y':
+                        final_args.append(template_part)
+                    idx += 1
+                    continue
+
                 final_args.append(template_part)
                 idx += 1
             # No clear_screen_if_compact here per argument, only at start/end of main interaction points.
@@ -883,6 +975,42 @@ def select_single_tool_for_action(manager: ToolManager, action_description: str)
         for i, tool_id in enumerate(tool_ids, 1): print(f"  {i:2d}. {TOOLS[tool_id]['name']}")
         print("  0. Cancel / Back to Main Menu")
 
+
+def ask_quality() -> str:
+    """Ask user to select encoding quality."""
+    print("\nSelect encoding quality (CQ value):")
+    print("  1. Master   (CQ=26) - Best quality, largest file size")
+    print("  2. Normal   (CQ=30) - Good balance of quality and size")
+    print("  3. Compact  (CQ=34) - Smaller size, noticeable quality loss")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1/2/3): ").strip()
+            if choice == '1': return "26"
+            elif choice == '2': return "30"
+            elif choice == '3': return "34"
+            else: print("! Invalid choice. Please enter 1, 2, or 3.")
+        except KeyboardInterrupt:
+            return "26" # Default on interrupt
+
+def ask_fps() -> str:
+    """Ask user to select FPS for encoding."""
+    print("\nSelect target Frames Per Second (FPS):")
+    print("  1. Original")
+    print("  2. 30 FPS")
+    print("  3. 60 FPS")
+    print("  4. 120 FPS")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1-4): ").strip()
+            if choice == '1': return "original"
+            elif choice == '2': return "30"
+            elif choice == '3': return "60"
+            elif choice == '4': return "120"
+            else: print("! Invalid choice. Please enter a number from 1 to 4.")
+        except KeyboardInterrupt:
+            return "original" # Default on interrupt
 
 def ask_output_format(tool_id: str) -> str:
     """Ask user to select output format for tools that support it."""

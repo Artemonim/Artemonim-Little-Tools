@@ -154,6 +154,22 @@ TOOLS = {
         "needs_dependencies": False,
         "supports_quality_selection": True,
         "supports_fps_selection": True
+    },
+    "image_audio_video": {
+        "name": "Image+Audio → Video Creator",
+        "description": "Create a video from a still image and an audio track (interactive only).",
+        "path": "VideoTools",
+        "script": "Image_Audio_To_Video.py",
+        "requirements": ["Pillow>=9.0.0"],
+        "system_deps": ["ffmpeg"],
+        "supports_batch": False,
+        "input_extensions": [
+            ".jpg", ".jpeg", ".png", ".bmp", ".tga",
+            ".mp3", ".wav", ".flac", ".ogg", ".aac"
+        ],
+        "output_extension": ".mp4",
+        "args_template": [],  # Interactive prompts handled inside the script
+        "needs_dependencies": True
     }
 }
 
@@ -775,8 +791,8 @@ class ToolManager:
         if tool.get("description"): print(f"--- {tool['description']} ---")
 
         if not tool["args_template"]:
-            if tool_id == "infinite_differ":
-                 print("* This is a GUI tool and will be launched without additional arguments.")
+            if tool_id in ["infinite_differ", "image_audio_video"]:
+                 print("* This tool runs interactively and will be launched without additional arguments.")
                  return []
             else:
                 print(f"* {tool['name']} has no pre-defined arguments. You can enter them manually.")

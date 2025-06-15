@@ -43,6 +43,29 @@ The startup scripts will:
 -   🎤 Audio/Video transcription with OpenAI Whisper
 -   🛠️ Unified common utilities for all tools
 
+## 🛠️ Available Tools
+
+### Audio/Video Tools
+
+-   [Whisper Audio/Video Transcriber](#whisper-audiovideo-transcriber)
+-   [Image+Audio → Video Creator](#imageaudio-%E2%86%92-video-creator)
+
+### Text Tools
+
+-   [Telegram Chats Distiller](#telegram-chats-distiller)
+-   [Infinite Differ (Multiple Text Comparator)](#infinite-differ)
+-   [Word-Markdown Converter](#word-markdown-converter)
+
+### Video Tools
+
+-   [FFMPEG MKV Audio Normalizer](#ffmpeg-mkv-audio-normalizer)
+-   [Topaz Video Merger](#topaz-video-merger)
+-   [Video Converter](#video-converter)
+
+### Utility Tools
+
+-   [Requirements Builder](#requirements-builder)
+
 ## 🏗️ Architecture
 
 LittleTools uses a unified architecture with shared utilities:
@@ -92,6 +115,33 @@ Transcribes audio and video files using OpenAI's Whisper model with GPU accelera
 
 ```bash
 python Audio-_Video-2-Text/whisper_transcriber.py [options]
+```
+
+### Image+Audio → Video Creator
+
+Creates an HEVC-encoded (Nvidia NVENC) video from a still image and an audio track.
+The resulting video keeps the image aspect ratio, but scales down so that the
+longest side is at most 2160 pixels (Lanczos). Frames per second are fixed at
+10 fps. Audio is re-encoded to AAC, 48 kHz, 320 kbps.
+
+**Features:**
+
+-   Combines a single image and a single audio file into an HEVC-encoded MP4 video.
+-   Preserves image aspect ratio with intelligent scaling (max 2160p on longest side).
+-   Fixed 10 FPS video output.
+-   Audio re-encoded to high-quality AAC (48 kHz, 320 kbps).
+-   Interactive-only mode for guided input.
+
+**Dependencies:**
+
+-   Pillow 9+ (Python dependency)
+-   ffmpeg (system dependency)
+
+**Usage:**
+
+```bash
+# This tool is launched via the interactive menu (menu.py)
+# python VideoTools/Image_Audio_To_Video.py # (Not typically run directly)
 ```
 
 ## Text Tools

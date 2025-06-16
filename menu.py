@@ -95,8 +95,9 @@ TOOLS = {
         "batch_takes_dir_input": True,
         "input_extensions": [".txt"],
         "output_extension": ".txt",
-        "args_template": ["{input_dir}", "-o", "{output_dir}", "--overwrite"],
-        "needs_dependencies": False
+        "args_template": ["{input_dir}", "-o", "{output_dir}", "--mode", "{mode}", "--overwrite"],
+        "needs_dependencies": False,
+        "supports_cyrillic_mode_selection": True
     },
     "ffmpeg_normalizer": {
         "name": "FFMPEG MKV Audio Normalizer",
@@ -651,6 +652,12 @@ class ToolManager:
                 fps = ask_fps()
                 print(f"* Selected FPS: {fps}")
 
+            # Ask for cyrillic mode if tool supports it
+            cyrillic_mode = "1" # Default
+            if tool.get("supports_cyrillic_mode_selection"):
+                cyrillic_mode = ask_cyrillic_mode()
+                print(f"* Selected Cyrillic removal mode: {cyrillic_mode}")
+
             script_path = SCRIPT_DIR / tool["path"] / tool["script"]
             if not script_path.exists():
                 print(f"! Script {script_path.name} not found.")
@@ -669,6 +676,8 @@ class ToolManager:
                     processed_args.append(quality)
                 elif a == "{fps}":
                     processed_args.append(fps)
+                elif a == "{mode}":
+                    processed_args.append(cyrillic_mode)
                 elif a == "--overwrite":
                     if do_overwrite:
                         processed_args.append(a)
@@ -838,6 +847,12 @@ class ToolManager:
                 if placeholder == "fps" and tool.get("supports_fps_selection"):
                     fps_choice = ask_fps()
                     final_args.append(fps_choice)
+                    idx += 1
+                    continue
+
+                if placeholder == "mode" and tool.get("supports_cyrillic_mode_selection"):
+                    mode_choice = ask_cyrillic_mode()
+                    final_args.append(mode_choice)
                     idx += 1
                     continue
 
@@ -1063,6 +1078,23 @@ def ask_output_format(tool_id: str) -> str:
                 print("! Invalid choice. Please enter '1' or '2'.")
         except KeyboardInterrupt:
             return "text"  # Default on interrupt
+
+def ask_cyrillic_mode() -> str:
+    """Ask user to select Cyrillic removal mode."""
+    print("\nSelect Cyrillic removal mode:")
+    print("  1. Remove all Cyrillic characters (default)")
+    print("  2. Remove part of line after first Cyrillic character")
+    print("  3. Remove part of line before last Cyrillic character")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1/2/3): ").strip()
+            if choice in ['1', '2', '3']:
+                return choice
+            else:
+                print("! Invalid choice. Please enter 1, 2, or 3.")
+        except KeyboardInterrupt:
+            return "1" # Default on interrupt
 
 def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
     tool = TOOLS[tool_id]

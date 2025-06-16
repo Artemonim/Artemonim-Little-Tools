@@ -3,9 +3,9 @@
 """
 Cyrillic Remover Tool
 
-This script removes Cyrillic characters from text files.
+This script removes Cyrillic characters from text files in several modes.
 It processes all .txt files in a given directory, and for each file,
-it creates a new version with all Cyrillic letters removed.
+it creates a new version with Cyrillic characters or parts of lines removed.
 
 The processed files are saved to an output directory, preserving the original filenames.
 """
@@ -35,35 +35,91 @@ from little_tools_utils import (
 DEFAULT_OUTPUT_FOLDER = "0-OUTPUT-0/CyrillicRemoved"
 SUPPORTED_EXTENSIONS = [".txt"]
 
-def remove_cyrillic(text: str) -> str:
+
+def is_cyrillic(char: str) -> bool:
     """
-    Removes Cyrillic characters from a string.
+    Checks if a character is in the Cyrillic Unicode blocks.
+    
+    Args:
+        char: The character to check.
+    
+    Returns:
+        True if the character is Cyrillic, False otherwise.
+    """
+    return '\u0400' <= char <= '\u04FF' or '\u0500' <= char <= '\u052F'
 
-    This function iterates over each character in the input string and
-    builds a new string containing only non-Cyrillic characters.
-    It covers the main Cyrillic block (U+0400–U+04FF) and the
-    Cyrillic Supplement block (U+0500–U+052F).
 
+def remove_all_cyrillic(text: str) -> str:
+    """
+    Mode 1: Removes all Cyrillic characters from a string.
+    
     Args:
         text: The input string.
-
+        
     Returns:
-        A new string with Cyrillic characters removed.
+        A new string with all Cyrillic characters removed.
     """
-    # Exclude characters in the Cyrillic Unicode blocks
-    return ''.join(
-        char for char in text
-        if not ('\u0400' <= char <= '\u04FF' or '\u0500' <= char <= '\u052F')
-    )
+    return ''.join(char for char in text if not is_cyrillic(char))
 
-def process_file(file_path: Path, output_dir: Path, overwrite: bool):
+
+def remove_from_first_cyrillic(text: str) -> str:
     """
-    Processes a single text file to remove Cyrillic characters.
+    Mode 2: For each line, removes text from the first Cyrillic character onward.
+    
+    Args:
+        text: The input string containing one or more lines.
+        
+    Returns:
+        The processed string with parts of lines removed.
+    """
+    processed_lines = []
+    for line in text.splitlines():
+        first_cyrillic_index = -1
+        for i, char in enumerate(line):
+            if is_cyrillic(char):
+                first_cyrillic_index = i
+                break
+        
+        if first_cyrillic_index != -1:
+            processed_lines.append(line[:first_cyrillic_index])
+        else:
+            processed_lines.append(line)
+    return "\n".join(processed_lines)
+
+
+def remove_to_last_cyrillic(text: str) -> str:
+    """
+    Mode 3: For each line, removes text from the start to the last Cyrillic character.
+    
+    Args:
+        text: The input string containing one or more lines.
+        
+    Returns:
+        The processed string with parts of lines removed.
+    """
+    processed_lines = []
+    for line in text.splitlines():
+        last_cyrillic_index = -1
+        for i, char in enumerate(line):
+            if is_cyrillic(char):
+                last_cyrillic_index = i
+        
+        if last_cyrillic_index != -1:
+            processed_lines.append(line[last_cyrillic_index + 1:])
+        else:
+            processed_lines.append(line)
+    return "\n".join(processed_lines)
+
+
+def process_file(file_path: Path, output_dir: Path, overwrite: bool, mode: int):
+    """
+    Processes a single text file to remove Cyrillic characters based on the selected mode.
 
     Args:
         file_path: The path to the input text file.
         output_dir: The directory where the processed file will be saved.
         overwrite: A boolean indicating whether to overwrite existing files.
+        mode: An integer (1, 2, or 3) specifying the removal mode.
 
     Returns:
         A string indicating the status of the operation ('processed', 'skipped', 'error').
@@ -77,12 +133,18 @@ def process_file(file_path: Path, output_dir: Path, overwrite: bool):
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             content = f.read()
         
-        cleaned_content = remove_cyrillic(content)
+        cleaned_content = ""
+        if mode == 1:
+            cleaned_content = remove_all_cyrillic(content)
+        elif mode == 2:
+            cleaned_content = remove_from_first_cyrillic(content)
+        elif mode == 3:
+            cleaned_content = remove_to_last_cyrillic(content)
         
         with open(output_path, 'w', encoding='utf-8') as f:
             f.write(cleaned_content)
             
-        print_status(f"Successfully removed Cyrillic from: {file_path.name}", "success")
+        print_status(f"Successfully processed (mode {mode}): {file_path.name}", "success")
         return "processed"
         
     except Exception as e:
@@ -94,7 +156,7 @@ def main():
     Main function to run the Cyrillic remover script.
     """
     parser = argparse.ArgumentParser(
-        description="Removes Cyrillic characters from .txt files.",
+        description="Removes Cyrillic characters from .txt files using different modes.",
         formatter_class=argparse.RawTextHelpFormatter
     )
     parser.add_argument(
@@ -109,6 +171,18 @@ def main():
         type=str,
         default=DEFAULT_OUTPUT_FOLDER,
         help=f"Output directory for processed files.\n(default: {DEFAULT_OUTPUT_FOLDER})"
+    )
+    parser.add_argument(
+        "-m", "--mode",
+        type=int,
+        default=1,
+        choices=[1, 2, 3],
+        help=(
+            "Removal mode:\n"
+            "1: Remove all Cyrillic characters (default).\n"
+            "2: Remove from the first Cyrillic character to the end of the line.\n"
+            "3: Remove from the start to the last Cyrillic character."
+        )
     )
     parser.add_argument(
         "--overwrite",
@@ -160,7 +234,7 @@ def main():
             break
             
         print_file_info(file_path.name, i + 1, len(files_to_process))
-        status = process_file(file_path, output_dir, args.overwrite)
+        status = process_file(file_path, output_dir, args.overwrite, args.mode)
         if status in stats:
             stats[status] += 1
 

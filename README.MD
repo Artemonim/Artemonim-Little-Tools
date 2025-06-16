@@ -55,6 +55,7 @@ The startup scripts will:
 -   [Telegram Chats Distiller](#telegram-chats-distiller)
 -   [Infinite Differ (Multiple Text Comparator)](#infinite-differ)
 -   [Word-Markdown Converter](#word-markdown-converter)
+-   [Syntx.ai Downloader](#syntxai-downloader)
 
 ### Video Tools
 
@@ -201,6 +202,29 @@ Convert between DOCX and Markdown formats.
 
 ```bash
 python TxtTools/WMDconverter/WMDconverter.py --source <input_file> --output <output_file> [--media-dir <media_directory>]
+```
+
+### Syntx.ai Downloader
+
+Downloads and parses content from Syntx.ai share links (llmshare.syntxai.net or llmchat.syntxai.net) and saves it as a Markdown file.
+
+**Features:**
+
+-   Downloads HTML content from provided Syntx.ai URLs.
+-   Extracts and concatenates all 'markdown-content' blocks.
+-   Allows custom output filename or defaults to ID from the URL.
+-   Automatically creates a dedicated output directory within `0-OUTPUT-0`.
+
+**Dependencies:**
+
+-   requests
+-   beautifulsoup4
+
+**Usage:**
+
+```bash
+# This tool is launched via the interactive menu (menu.py)
+# python TxtTools/SyntxAiDownloader.py # (Not typically run directly)
 ```
 
 ## Video Tools

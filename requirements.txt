@@ -8,6 +8,10 @@ send2trash>=1.8.0
 # For Infinite Differ (Multiple Text Comparator)
 PyQt6>=6.4.0
 
+# For Syntx.ai Downloader
+requests>=2.28.0
+beautifulsoup4>=4.11.0
+
 # For Word-Markdown Converter
 pypandoc>=1.13
 

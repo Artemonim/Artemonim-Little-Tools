@@ -58,6 +58,20 @@ TOOLS = {
         "args_template": ["-i", "{input_file}", "-o", "{output_file}"],
         "needs_dependencies": False
     },
+    "syntx_downloader": {
+        "name": "Syntx.ai Downloader",
+        "description": "Download content from Syntx.ai share links.",
+        "path": "TxtTools",
+        "script": "SyntxAiDownloader.py",
+        "requirements": ["requests>=2.28.0", "beautifulsoup4>=4.11.0"],
+        "system_deps": [],
+        "supports_batch": False,
+        "is_interactive_only": True,
+        "input_extensions": [],
+        "output_extension": None,
+        "args_template": [],
+        "needs_dependencies": True
+    },
     "infinite_differ": {
         "name": "Infinite Differ (Multiple Text Comparator)",
         "description": "Compare multiple text files simultaneously with GUI",
@@ -812,6 +826,10 @@ class ToolManager:
         # Screen cleared by run_tool_interactive or run_tool_menu before calling this if compact.
         print(f"\n--- {tool['name']}: Interactive Mode Setup ---")
         if tool.get("description"): print(f"--- {tool['description']} ---")
+
+        if tool.get("is_interactive_only"):
+            print("* This tool is fully interactive and will be launched without additional arguments.")
+            return []
 
         if not tool["args_template"]:
             if tool_id in ["infinite_differ", "image_audio_video"]:

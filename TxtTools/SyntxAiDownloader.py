@@ -66,8 +66,131 @@ def fetch_and_parse_content(url: str) -> str:
         print_status("No 'markdown-content' divs found on the page.", "warning")
         return ""
 
-    all_markdown = "\n\n---\n\n".join(div.get_text(separator='\n', strip=True) for div in content_divs)
-    return all_markdown
+    all_markdown_parts = []
+    
+    for div in content_divs:
+        markdown_text = convert_html_to_markdown(div)
+        if markdown_text.strip():
+            all_markdown_parts.append(markdown_text.strip())
+    
+    return "\n\n---\n\n".join(all_markdown_parts)
+
+def convert_html_to_markdown(html_element) -> str:
+    """Convert HTML element to properly formatted Markdown."""
+    # * Replace common HTML elements with Markdown equivalents
+    html_str = str(html_element)
+    
+    # * Process the HTML with BeautifulSoup for better structure handling
+    soup = BeautifulSoup(html_str, 'html.parser')
+    
+    # * Convert line breaks FIRST so that paragraphs retain them
+    for br in soup.find_all('br'):
+        br.replace_with('\n')
+
+    # * Convert headers
+    for i in range(1, 7):
+        for header in soup.find_all(f'h{i}'):
+            header_text = header.get_text(strip=True)
+            if header_text:
+                header.replace_with(f"\n\n{'#' * i} {header_text}\n\n")
+
+    # * Convert paragraphs (after <br> replacement to keep line breaks)
+    for p in soup.find_all('p'):
+        text = p.get_text(separator='\n', strip=True)
+        if text:
+            p.replace_with(f"\n\n{text}\n\n")
+    
+    # * Convert lists
+    for ul in soup.find_all('ul'):
+        list_items = []
+        for li in ul.find_all('li', recursive=False):
+            item_text = li.get_text(strip=True)
+            if item_text:
+                list_items.append(f"- {item_text}")
+        if list_items:
+            ul.replace_with('\n\n' + '\n'.join(list_items) + '\n\n')
+    
+    for ol in soup.find_all('ol'):
+        list_items = []
+        for i, li in enumerate(ol.find_all('li', recursive=False), 1):
+            item_text = li.get_text(strip=True)
+            if item_text:
+                list_items.append(f"{i}. {item_text}")
+        if list_items:
+            ol.replace_with('\n\n' + '\n'.join(list_items) + '\n\n')
+    
+    # * Convert bold text
+    for strong in soup.find_all(['strong', 'b']):
+        text = strong.get_text(strip=True)
+        if text:
+            strong.replace_with(f"**{text}**")
+    
+    # * Convert italic text
+    for em in soup.find_all(['em', 'i']):
+        text = em.get_text(strip=True)
+        if text:
+            em.replace_with(f"*{text}*")
+    
+    # * Convert inline code
+    for code in soup.find_all('code'):
+        text = code.get_text(strip=True)
+        if text:
+            code.replace_with(f"`{text}`")
+    
+    # * Convert code blocks
+    for pre in soup.find_all('pre'):
+        code_text = pre.get_text(strip=False)
+        if code_text:
+            pre.replace_with(f"\n\n```\n{code_text}\n```\n\n")
+    
+    # * Convert blockquotes
+    for blockquote in soup.find_all('blockquote'):
+        quote_text = blockquote.get_text(separator='\n', strip=True)
+        if quote_text:
+            quoted_lines = []
+            for line in quote_text.split('\n'):
+                line = line.strip()
+                if line:
+                    quoted_lines.append(f"> {line}")
+            if quoted_lines:
+                blockquote.replace_with('\n\n' + '\n'.join(quoted_lines) + '\n\n')
+    
+    # * Convert links
+    for link in soup.find_all('a'):
+        href = link.get('href', '')
+        text = link.get_text(strip=True)
+        if text and href:
+            link.replace_with(f"[{text}]({href})")
+        elif text:
+            link.replace_with(text)
+    
+    # * Get the final text
+    result = soup.get_text(separator='', strip=False)
+    
+    # * Clean up excessive whitespace
+    lines = result.split('\n')
+    cleaned_lines = []
+    prev_empty = False
+    
+    for line in lines:
+        line = line.rstrip()
+        is_empty = not line.strip()
+        
+        if is_empty:
+            if not prev_empty:
+                cleaned_lines.append('')
+            prev_empty = True
+        else:
+            cleaned_lines.append(line)
+            prev_empty = False
+    
+    # * Join lines and remove leading/trailing whitespace
+    result = '\n'.join(cleaned_lines).strip()
+    
+    # * Ensure proper spacing around headers and lists
+    result = result.replace('\n\n\n', '\n\n')
+    
+    return result
 
 def save_content_to_file(content: str, filename: str) -> None:
     """Saves the extracted content to a file."""

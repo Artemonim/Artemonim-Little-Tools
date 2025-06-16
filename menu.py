@@ -84,6 +84,20 @@ TOOLS = {
         "args_template": ["--source", "{input_file}", "--output", "{output_file}", "--media-dir", "{media_dir}"],
         "needs_dependencies": True
     },
+    "cyrillic_remover": {
+        "name": "Cyrillic Remover",
+        "description": "Remove Cyrillic characters from text files.",
+        "path": "TxtTools/CyrillicRemover",
+        "script": "CyrillicRemover.py",
+        "requirements": [],
+        "system_deps": [],
+        "supports_batch": True,
+        "batch_takes_dir_input": True,
+        "input_extensions": [".txt"],
+        "output_extension": ".txt",
+        "args_template": ["{input_dir}", "-o", "{output_dir}", "--overwrite"],
+        "needs_dependencies": False
+    },
     "ffmpeg_normalizer": {
         "name": "FFMPEG MKV Audio Normalizer",
         "description": "Normalize audio tracks in MKV files. Script processes entire input dir.",

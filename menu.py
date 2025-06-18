@@ -943,6 +943,162 @@ class ToolManager:
         else:
             print("* Source files were kept.")
 
+    def run_video_converter_merge(self) -> Tuple[bool, str]:
+        """Run the Video Converter in *merge* mode.
+
+        Steps:
+        1. Ask the user to provide several video files (order-sensitive).
+        2. Convert each file with the same quality/FPS settings to HEVC (NVENC).
+        3. Concatenate the converted files into a single output MP4 using ffmpeg *concat*.
+        4. Offer optional cleanup of source and temporary files.
+        """
+        tool_id = "video_converter"
+        tool = TOOLS[tool_id]
+
+        print("\n--- Video Converter: MERGE MODE ---")
+        print("* Enter paths to video files **in the order they should appear** in the final video.")
+        print(f"* Supported extensions: {', '.join(tool['input_extensions'])}")
+        print("* Press Enter on an empty line to finish the list.\n")
+
+        # 1. Collect input files
+        input_files: List[Path] = []
+        while True:
+            try:
+                raw_path = input("Video file path (Enter to finish): ").strip()
+            except KeyboardInterrupt:
+                print("\n! Merge operation cancelled by user.")
+                return False, self.post_execution_menu(tool_id, False)
+
+            if raw_path == "":
+                break
+
+            # * Remove surrounding quotes if present
+            if (raw_path.startswith('"') and raw_path.endswith('"')) or \
+               (raw_path.startswith("'") and raw_path.endswith("'")):
+                raw_path = raw_path[1:-1]
+
+            candidate_path = Path(raw_path)
+            # Treat relative paths as inside INPUT_DIR for convenience
+            if not candidate_path.is_absolute():
+                candidate_path = INPUT_DIR / candidate_path
+
+            if not candidate_path.exists():
+                print(f"  ! File not found: {candidate_path}")
+                continue
+            if candidate_path.suffix.lower() not in tool["input_extensions"]:
+                print(f"  ! Unsupported extension: {candidate_path.suffix}")
+                continue
+
+            input_files.append(candidate_path)
+            print(f"  ✓ Added: {candidate_path.name}")
+
+        if len(input_files) < 2:
+            print("! Need at least two video files to merge. Aborting merge mode.")
+            return False, self.post_execution_menu(tool_id, False)
+
+        # 2. Ask for output filename
+        default_output_name = "merged_output.mp4"
+        try:
+            out_name = input(f"\nEnter output file name (default: {default_output_name}): ").strip()
+        except KeyboardInterrupt:
+            print("\n! Merge operation cancelled by user.")
+            return False, self.post_execution_menu(tool_id, False)
+        final_output_path = OUTPUT_DIR / (out_name if out_name else default_output_name)
+
+        # 3. Ask for quality and FPS
+        quality = ask_quality()
+        fps = ask_fps()
+        print(f"* Selected quality (CQ): {quality}")
+        print(f"* Selected FPS: {fps}\n")
+
+        # 4. Prepare temporary directory for intermediate conversions
+        temp_dir = OUTPUT_DIR / "__merge_temp__"
+        try:
+            temp_dir.mkdir(exist_ok=True)
+        except Exception as e:
+            print(f"! Could not create temporary directory '{temp_dir}': {e}")
+            return False, self.post_execution_menu(tool_id, False)
+
+        converted_files: List[Path] = []
+        for idx, src_path in enumerate(input_files, start=1):
+            converted_path = temp_dir / f"{idx:03d}_{src_path.stem}_converted.mp4"
+            print(f"* Converting ({idx}/{len(input_files)}): {src_path.name} → {converted_path.name}")
+
+            # Build ffmpeg command mirroring Video Converter settings
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", str(src_path),
+                "-c:v", "hevc_nvenc",
+                "-preset", "hq",
+                "-rc", "vbr_hq",
+                "-cq", quality,
+                "-spatial_aq", "1",
+                "-temporal_aq", "1",
+                "-aq-strength", "8",
+                "-rc-lookahead", "32",
+                "-bf", "4",
+                "-refs", "4",
+                "-b_ref_mode", "middle",
+                "-movflags", "+faststart",
+                "-c:a", "copy",
+            ]
+            if fps != "original":
+                cmd.extend(["-vf", f"fps={fps}"])
+            cmd.append(str(converted_path))
+
+            result = subprocess.run(cmd)
+            if result.returncode != 0:
+                print(f"  ✗ Conversion failed for {src_path.name}. Aborting merge mode.")
+                return False, self.post_execution_menu(tool_id, False)
+
+            converted_files.append(converted_path)
+            print(f"  ✓ Converted: {converted_path.name}")
+
+        # 5. Create concat list file
+        concat_list_path = temp_dir / "concat_list.txt"
+        try:
+            with concat_list_path.open("w", encoding="utf-8") as f_list:
+                for p in converted_files:
+                    f_list.write(f"file '{p.as_posix()}'\n")
+        except Exception as e:
+            print(f"! Failed to create concat list: {e}")
+            return False, self.post_execution_menu(tool_id, False)
+
+        # 6. Merge using ffmpeg concat
+        print("\n* Merging converted videos into final output…")
+        merge_cmd = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", str(concat_list_path),
+            "-c", "copy",
+            str(final_output_path)
+        ]
+        merge_result = subprocess.run(merge_cmd)
+        success = merge_result.returncode == 0
+        if success:
+            print(f"  ✓ Merge successful → {final_output_path}")
+        else:
+            print("  ✗ Merge failed. See ffmpeg output above for details.")
+
+        # 7. Offer cleanup of temporary and/or source files
+        if success:
+            try:
+                cleanup_choice = input("\nDelete temporary converted files? (y/N): ").strip().lower()
+            except KeyboardInterrupt:
+                cleanup_choice = 'n'
+            if cleanup_choice == 'y':
+                try:
+                    shutil.rmtree(temp_dir)
+                    print("* Temporary files removed.")
+                except Exception as e:
+                    print(f"! Could not remove temporary directory: {e}")
+
+            # Offer cleanup of source files
+            self.offer_cleanup(input_files)
+
+        # 8. Final navigation decision
+        return success, self.post_execution_menu(tool_id, success)
+
 
 def print_menu(manager: ToolManager):
     print("\n" + "="*60)
@@ -1150,6 +1306,9 @@ def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
             print(f"  1. Batch mode {batch_note}")
         print("  2. Interactive mode (manually specify inputs/options)")
         if tool_id == "infinite_differ": print("      (this will open the GUI application)")
+        # * Merge mode only for Video Converter
+        if tool_id == "video_converter":
+            print("  3. Merge mode (convert selected videos and concatenate into one)")
         print("  0. Back to Main Menu")
         
         choice = input("\nEnter your choice: ").strip()
@@ -1164,6 +1323,8 @@ def run_tool_menu(manager: ToolManager, tool_id: str) -> str:
             _success, post_exec_action = manager.run_tool_batch(tool_id)
         elif choice == '2':
             _success, post_exec_action = manager.run_tool_interactive(tool_id)
+        elif choice == '3' and tool_id == 'video_converter':
+             _success, post_exec_action = manager.run_video_converter_merge()
         else:
             print("! Invalid choice.")
             input("Press Enter to try again...")

@@ -26,7 +26,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 from little_tools_utils import (
     setup_signal_handler, is_interrupted, register_cleanup_function,
     ensure_dir_exists, check_command_available, safe_delete,
-    format_duration, print_file_info, print_status
+    format_duration, print_file_info, print_status,
+    BatchTimeEstimator
 )
 
 # * Increase recursion limit at module level to avoid RecursionError
@@ -49,12 +50,6 @@ TEMPERATURE = 0.25
 # * Paths to sound files
 SUCCESS_SOUND_PATH = SCRIPT_DIR / "Sounds" / "task_complete.opus"
 ERROR_SOUND_PATH = SCRIPT_DIR / "Sounds" / "error.opus"
-
-# * Global variables for time estimation
-_batch_start_time = None
-_total_audio_seconds_processed = 0.0
-_total_audio_seconds_remaining = 0.0
-_files_processed = 0
 
 SUPPORTED_EXTENSIONS = [
     ".mp3", ".wav", ".m4a", ".aac", ".ogg", ".flac",  # Common audio
@@ -85,29 +80,6 @@ def get_audio_duration(file_path: Path) -> float:
     except Exception:
         return 0.0
 
-def calculate_estimated_time_remaining() -> str:
-    """Calculate estimated time remaining for batch processing."""
-    global _batch_start_time, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
-    
-    if _files_processed == 0 or _batch_start_time is None:
-        return "N/A"
-    
-    elapsed_time = time.time() - _batch_start_time
-    
-    if _total_audio_seconds_processed <= 0:
-        return "N/A"
-    
-    # Calculate processing rate (seconds of audio per second of real time)
-    processing_rate = _total_audio_seconds_processed / elapsed_time
-    
-    if processing_rate <= 0:
-        return "N/A"
-    
-    # Estimate remaining time
-    estimated_seconds = _total_audio_seconds_remaining / processing_rate
-    
-    return format_duration(estimated_seconds)
-
 def format_timestamp(seconds: float) -> str:
     """Format seconds as HH:MM:SS.fff timestamp."""
     hours = int(seconds // 3600)
@@ -115,18 +87,16 @@ def format_timestamp(seconds: float) -> str:
     seconds = seconds % 60
     return f"{hours:02d}:{minutes:02d}:{seconds:06.3f}"
 
-def transcribe_file(file_path: Path, model, output_dir: Path, output_format: str = "text", current_file: int = 1, total_files: int = 1) -> bool:
+def transcribe_file(file_path: Path, model, output_dir: Path, estimator: BatchTimeEstimator, output_format: str = "text", current_file: int = 1, total_files: int = 1) -> bool:
     """Transcribe a single audio or video file."""
-    global _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
-    
     if is_interrupted():
         return False
     
-    print(f"* Processing ({current_file}/{total_files} est. {calculate_estimated_time_remaining()}): {file_path.name}")
+    print(f"* Processing ({current_file}/{total_files} | ETA: {estimator.get_eta_str()}): {file_path.name}")
     
     # * Track processing start time
     file_start_time = time.time()
-    file_duration = 0.0
+    file_duration = get_audio_duration(file_path)
     
     temp_audio_file = None
     try:
@@ -223,9 +193,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, output_format: str
         print(f"  ✓ Transcription saved to: {output_file.name}")
         
         # * Update time tracking variables
-        _total_audio_seconds_processed += file_duration
-        _total_audio_seconds_remaining -= file_duration
-        _files_processed += 1
+        estimator.update(file_duration)
         
         return True
         
@@ -461,21 +429,20 @@ def main():
         sys.exit(1)
 
     # * Initialize time tracking variables
-    global _batch_start_time, _total_audio_seconds_processed, _total_audio_seconds_remaining, _files_processed
-    _batch_start_time = time.time()
-    _total_audio_seconds_processed = 0.0
-    _files_processed = 0
+    estimator = BatchTimeEstimator()
     
     # * Calculate total audio duration for all files
-    _total_audio_seconds_remaining = 0.0
     print("* Calculating total audio duration...")
     for file_path in files_to_process:
         duration = get_audio_duration(file_path)
-        _total_audio_seconds_remaining += duration
+        estimator.add_item(duration)
     
-    if _total_audio_seconds_remaining > 0:
-        print(f"* Total audio duration: {format_duration(_total_audio_seconds_remaining)}")
+    if estimator.total_workload > 0:
+        print(f"* Total audio duration: {format_duration(estimator.total_workload)}")
 
+    # Start the master timer
+    estimator.start()
+    
     successful_transcriptions = 0
     for current_file_num, file_to_process in enumerate(files_to_process, 1):
         # Check for interruption before processing each file
@@ -483,7 +450,7 @@ def main():
             print("\n! Processing interrupted by user.")
             break
             
-        if transcribe_file(file_to_process, model, output_dir, args.format, current_file_num, len(files_to_process)):
+        if transcribe_file(file_to_process, model, output_dir, estimator, args.format, current_file_num, len(files_to_process)):
             successful_transcriptions += 1
 
     print(f'\n--- Transcription Summary ---')

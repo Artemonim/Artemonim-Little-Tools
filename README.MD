@@ -282,9 +282,11 @@ Re-encodes videos with HEVC (Nvidia NVENC) with quality and FPS options.
 **Features:**
 
 -   Re-encodes videos using HEVC (Nvidia NVENC).
--   Allows user to select quality presets (Master, Normal, Compact).
+-   Allows user to select quality presets (Master, Normal, Compact, Compressed).
+-   `Compressed` quality also scales video to 720p on the smaller side while preserving aspect ratio.
 -   Allows user to select FPS (original, 30, 60, 120).
--   Processes all compatible video files from an input directory to an output directory.
+-   **Batch mode** processes all compatible video files from an input directory to an output directory ().
+-   **Merge mode** allows selecting multiple video files to be converted (with chosen quality/FPS) and then concatenated into a single output video.
 -   Single-file processing on GPU to avoid resource contention.
 
 **Dependencies:**

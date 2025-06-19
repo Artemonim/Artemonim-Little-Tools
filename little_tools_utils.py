@@ -28,6 +28,7 @@ import shutil
 from pathlib import Path
 from typing import List, Optional, Union, Callable
 import send2trash  # * For safe file deletion to recycle bin
+import time
 
 # * Better Comments:
 # * Important
@@ -250,7 +251,6 @@ def clean_partial_output(output_path: Union[str, Path], max_attempts: int = 3) -
                 return True
         except Exception as e:
             if attempt < max_attempts - 1:
-                import time
                 time.sleep(1)  # Wait before retry
             else:
                 print(f"! Failed to delete partial file after {max_attempts} attempts: {e}")
@@ -415,6 +415,89 @@ def create_backup_name(file_path: Union[str, Path], suffix: str = "_backup") -> 
     return file_path.parent / f"{file_path.stem}{suffix}{file_path.suffix}"
 
 
+class BatchTimeEstimator:
+    """
+    Estimates the remaining time for a batch process based on workload.
+    
+    This class tracks the total workload (e.g., total seconds of video),
+    the amount of workload processed, and the elapsed time to provide
+    an Estimated Time of Arrival (ETA).
+
+    Usage:
+        estimator = BatchTimeEstimator()
+        for item in item_list:
+            estimator.add_item(get_workload(item))
+        
+        estimator.start()
+        
+        for item in item_list:
+            # Display ETA before processing
+            print(f"ETA: {estimator.get_eta_str()}")
+            
+            # Process item...
+            workload = get_workload(item)
+            estimator.update(workload)
+    """
+    def __init__(self):
+        """Initializes the BatchTimeEstimator."""
+        self.start_time: Optional[float] = None
+        self.total_workload: float = 0.0
+        self.workload_processed: float = 0.0
+        self.items_processed: int = 0
+
+    def start(self) -> None:
+        """Starts the master timer for the batch process."""
+        self.start_time = time.time()
+
+    def add_item(self, workload: float) -> None:
+        """
+        Adds an item's workload to the total.
+        
+        Args:
+            workload: A numerical value representing the processing cost of an item (e.g., duration in seconds).
+        """
+        if workload > 0:
+            self.total_workload += workload
+
+    def update(self, workload_done: float) -> None:
+        """
+        Updates the estimator with the amount of workload just completed.
+        
+        Args:
+            workload_done: The numerical workload value of the item that just finished processing.
+        """
+        if workload_done > 0:
+            self.workload_processed += workload_done
+        self.items_processed += 1
+
+    def get_eta_str(self) -> str:
+        """
+        Calculates and formats the estimated time remaining.
+        
+        Returns:
+            A string representing the formatted ETA (e.g., "01:23:45" or "N/A").
+        """
+        # Ensure start has been called and some progress has been made
+        if self.start_time is None or self.items_processed == 0 or self.workload_processed <= 0:
+            return "N/A"
+        
+        elapsed_time = time.time() - self.start_time
+        if elapsed_time <= 0:
+            return "N/A"
+            
+        # Calculate processing rate (workload units per second of real time)
+        processing_rate = self.workload_processed / elapsed_time
+        if processing_rate <= 0:
+            return "N/A"
+        
+        remaining_workload = self.total_workload - self.workload_processed
+        
+        # Estimate remaining time in seconds
+        estimated_seconds = remaining_workload / processing_rate
+        
+        return format_duration(estimated_seconds)
+
+
 # * Export commonly used functions for easy importing
 __all__ = [
     "is_interrupted", "register_cleanup_function", "setup_signal_handler",
@@ -422,5 +505,5 @@ __all__ = [
     "check_file_exists_with_overwrite", "clean_partial_output",
     "print_separator", "print_file_info", "print_status",
     "clear_screen_if_compact", "format_duration", "get_platform_info",
-    "check_command_available", "create_backup_name"
+    "check_command_available", "create_backup_name", "BatchTimeEstimator"
 ] 

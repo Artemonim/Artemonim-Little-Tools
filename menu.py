@@ -1013,91 +1013,118 @@ class ToolManager:
 
         # 4. Prepare temporary directory for intermediate conversions
         temp_dir = OUTPUT_DIR / "__merge_temp__"
-        try:
-            temp_dir.mkdir(exist_ok=True)
-        except Exception as e:
-            print(f"! Could not create temporary directory '{temp_dir}': {e}")
-            return False, self.post_execution_menu(tool_id, False)
+        
+        # * Use ffmpeg_utils helpers for progress bar and time estimation
+        import asyncio
+        from VideoTools.ffmpeg_utils import run_ffmpeg_command, get_video_duration, ProcessingStats
+        from little_tools_utils import BatchTimeEstimator, format_duration
+
+        estimator = BatchTimeEstimator()
+        # Calculate total workload for ETA
+        print("* Calculating total duration for ETA...")
+        for src_path in input_files:
+            try:
+                duration = asyncio.run(get_video_duration(str(src_path)))
+                if duration:
+                    estimator.add_item(duration)
+            except Exception:
+                pass  # Ignore if duration can't be fetched for a file
+
+        if estimator.total_workload > 0:
+            print(f"* Total video duration: {format_duration(estimator.total_workload)}")
 
         converted_files: List[Path] = []
-        for idx, src_path in enumerate(input_files, start=1):
-            converted_path = temp_dir / f"{idx:03d}_{src_path.stem}_converted.mp4"
-            print(f"* Converting ({idx}/{len(input_files)}): {src_path.name} → {converted_path.name}")
-
-            # Build ffmpeg command mirroring Video Converter settings
-            cmd = [
-                "ffmpeg", "-y",
-                "-i", str(src_path),
-                "-c:v", "hevc_nvenc",
-                "-preset", "hq",
-                "-rc", "vbr_hq",
-                "-cq", quality,
-                "-spatial_aq", "1",
-                "-temporal_aq", "1",
-                "-aq-strength", "8",
-                "-rc-lookahead", "32",
-                "-bf", "4",
-                "-refs", "4",
-                "-b_ref_mode", "middle",
-                "-movflags", "+faststart",
-                "-c:a", "copy",
-            ]
-            if fps != "original":
-                cmd.extend(["-vf", f"fps={fps}"])
-            cmd.append(str(converted_path))
-
-            result = subprocess.run(cmd)
-            if result.returncode != 0:
-                print(f"  ✗ Conversion failed for {src_path.name}. Aborting merge mode.")
-                return False, self.post_execution_menu(tool_id, False)
-
-            converted_files.append(converted_path)
-            print(f"  ✓ Converted: {converted_path.name}")
-
-        # 5. Create concat list file
-        concat_list_path = temp_dir / "concat_list.txt"
+        stats = ProcessingStats()
+        merge_success = False
+        
         try:
-            with concat_list_path.open("w", encoding="utf-8") as f_list:
-                for p in converted_files:
-                    f_list.write(f"file '{p.as_posix()}'\n")
-        except Exception as e:
-            print(f"! Failed to create concat list: {e}")
-            return False, self.post_execution_menu(tool_id, False)
+            temp_dir.mkdir(exist_ok=True)
+            estimator.start()
 
-        # 6. Merge using ffmpeg concat
-        print("\n* Merging converted videos into final output…")
-        merge_cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0",
-            "-i", str(concat_list_path),
-            "-c", "copy",
-            str(final_output_path)
-        ]
-        merge_result = subprocess.run(merge_cmd)
-        success = merge_result.returncode == 0
-        if success:
-            print(f"  ✓ Merge successful → {final_output_path}")
-        else:
-            print("  ✗ Merge failed. See ffmpeg output above for details.")
+            for idx, src_path in enumerate(input_files, start=1):
+                converted_path = temp_dir / f"{idx:03d}_{src_path.stem}_converted.mp4"
+                print(f"* Converting ({idx}/{len(input_files)} | ETA: {estimator.get_eta_str()}): {src_path.name} → {converted_path.name}")
 
-        # 7. Offer cleanup of temporary and/or source files
-        if success:
-            try:
-                cleanup_choice = input("\nDelete temporary converted files? (y/N): ").strip().lower()
-            except KeyboardInterrupt:
-                cleanup_choice = 'n'
-            if cleanup_choice == 'y':
+                # Build ffmpeg command mirroring Video Converter settings
+                cmd = [
+                    "ffmpeg", "-y", "-i", str(src_path),
+                    "-c:v", "hevc_nvenc", "-preset", "hq", "-rc", "vbr_hq",
+                    "-cq", quality, "-spatial_aq", "1", "-temporal_aq", "1",
+                    "-aq-strength", "8", "-rc-lookahead", "32", "-bf", "4",
+                    "-refs", "4", "-b_ref_mode", "middle", "-movflags", "+faststart",
+                    "-c:a", "copy",
+                ]
+                if quality == "40":
+                    filters = ["scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',flags=lanczos"]
+                    if fps != "original":
+                        filters.append(f"fps={fps}")
+                    cmd.extend(["-vf", ",".join(filters)])
+                else:
+                    if fps != "original":
+                        cmd.extend(["-vf", f"fps={fps}"])
+                cmd.append(str(converted_path))
+
+                total_duration = None
                 try:
-                    shutil.rmtree(temp_dir)
-                    print("* Temporary files removed.")
-                except Exception as e:
-                    print(f"! Could not remove temporary directory: {e}")
+                    total_duration = asyncio.run(get_video_duration(str(src_path)))
+                except Exception:
+                    pass
 
-            # Offer cleanup of source files
+                file_success = asyncio.run(
+                    run_ffmpeg_command(
+                        cmd, stats=stats, quiet=True, output_path=str(converted_path),
+                        file_position=idx, file_count=len(input_files),
+                        filename=src_path.name, total_duration=total_duration,
+                    )
+                )
+
+                if not file_success:
+                    print(f"  ✗ Conversion failed for {src_path.name}. Aborting merge.")
+                    raise RuntimeError("FFmpeg conversion failed")
+
+                converted_files.append(converted_path)
+                if total_duration:
+                    estimator.update(total_duration)
+                print(f"  ✓ Converted: {converted_path.name}")
+
+            # 5. Create concat list file
+            concat_list_path = temp_dir / "concat_list.txt"
+            try:
+                with concat_list_path.open("w", encoding="utf-8") as f_list:
+                    for p in converted_files:
+                        f_list.write(f"file '{p.as_posix()}'\n")
+            except Exception as e:
+                raise RuntimeError(f"Failed to create concat list: {e}")
+
+            # 6. Merge using ffmpeg concat
+            print("\n* Merging converted videos into final output…")
+            merge_cmd = [
+                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
+                "-i", str(concat_list_path), "-c", "copy", str(final_output_path)
+            ]
+            merge_result = subprocess.run(merge_cmd)
+            merge_success = merge_result.returncode == 0
+            if merge_success:
+                print(f"  ✓ Merge successful → {final_output_path}")
+            else:
+                print("  ✗ Merge failed. See ffmpeg output above for details.")
+        
+        except KeyboardInterrupt:
+            print("\n! Merge operation cancelled by user.")
+        except Exception as e:
+            print(f"\n! An error occurred during merge: {e}")
+        finally:
+            # Always remove temporary directory
+            if temp_dir.exists():
+                print("* Cleaning up temporary directory...")
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+        # 7. Offer cleanup of source files (optional, only on success)
+        if merge_success:
             self.offer_cleanup(input_files)
 
         # 8. Final navigation decision
-        return success, self.post_execution_menu(tool_id, success)
+        return merge_success, self.post_execution_menu(tool_id, merge_success)
 
 
 def print_menu(manager: ToolManager):
@@ -1196,21 +1223,28 @@ def select_single_tool_for_action(manager: ToolManager, action_description: str)
 
 
 def ask_quality() -> str:
-    """Ask user to select encoding quality."""
+    """Ask user to select encoding quality (CQ)."""
     print("\nSelect encoding quality (CQ value):")
-    print("  1. Master   (CQ=26) - Best quality, largest file size")
-    print("  2. Normal   (CQ=30) - Good balance of quality and size")
-    print("  3. Compact  (CQ=34) - Smaller size, noticeable quality loss")
+    print("  1. Master     (CQ=26) - Best quality, largest file size")
+    print("  2. Normal     (CQ=30) - Good balance of quality and size")
+    print("  3. Compact    (CQ=34) - Smaller size, some quality loss")
+    print("  4. Compressed (CQ=40) - Very small size, significant loss")
     
     while True:
         try:
-            choice = input("Enter your choice (1/2/3): ").strip()
-            if choice == '1': return "26"
-            elif choice == '2': return "30"
-            elif choice == '3': return "34"
-            else: print("! Invalid choice. Please enter 1, 2, or 3.")
+            choice = input("Enter your choice (1-4): ").strip()
+            if choice == '1':
+                return "26"
+            elif choice == '2':
+                return "30"
+            elif choice == '3':
+                return "34"
+            elif choice == '4':
+                return "40"
+            else:
+                print("! Invalid choice. Please enter 1, 2, 3, or 4.")
         except KeyboardInterrupt:
-            return "26" # Default on interrupt
+            return "26"  # Default on interrupt
 
 def ask_fps() -> str:
     """Ask user to select FPS for encoding."""

@@ -312,33 +312,39 @@ def get_metadata_options(audio_tracks, verbose=False):
         
     return metadata_options
 
-def get_nvenc_hevc_video_options(quality: str = "30") -> list[str]:
+def get_nvenc_video_options(codec: str, quality: str) -> list[str]:
     """
-    Returns a list of recommended FFmpeg options for HEVC (NVENC) encoding.
+    Returns a list of recommended FFmpeg options for NVENC encoding.
     
     These settings are optimized for quality and compatibility based on
     experimental results.
     
     Args:
+        codec: The video codec to use ('hevc' or 'h264').
         quality: The Constant Quality (CQ) value as a string.
                  
     Returns:
         A list of FFmpeg command-line arguments for video encoding.
     """
-    return [
-        "-c:v", "hevc_nvenc",
-        "-preset", "hq",
+    # * Base options are shared between H.264 and HEVC for consistency.
+    base_options = [
         "-rc", "vbr_hq",
         "-cq", quality,
         "-spatial_aq", "1",
         "-temporal_aq", "1",
         "-aq-strength", "8",
         "-rc-lookahead", "32",
-        "-bf", "4",
         "-refs", "4",
-        "-b_ref_mode", "middle",
         "-movflags", "+faststart",
     ]
+
+    if codec == "h264":
+        # * H.264 uses a smaller number of B-frames.
+        # * Use new preset system. p5 ('slow') is a good balance of speed/quality.
+        return ["-c:v", "h264_nvenc", "-preset", "p5", "-tune", "hq", "-bf", "2"] + base_options
+    
+    # * Default to HEVC (h265), which has more advanced options.
+    return ["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-bf", "4", "-b_ref_mode", "middle"] + base_options
 
 async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False, 
                              output_path=None, file_position=None, file_count=None, filename=None,
@@ -675,7 +681,7 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
     stats.print_stats()
     return stats
 
-async def run_tasks_with_semaphore(tasks, stats, stop_event):
+async def run_tasks_with_semaphore(tasks, stats, stop_event, concurrency: int):
     """
     Run tasks with a semaphore to limit concurrency.
     
@@ -683,12 +689,13 @@ async def run_tasks_with_semaphore(tasks, stats, stop_event):
         tasks: A list of awaitable tasks to run.
         stats: ProcessingStats object.
         stop_event: Event to signal task termination.
+        concurrency: The maximum number of tasks to run at once.
     """
     # * Force single-file processing for GPU tasks to avoid resource contention.
-    limit = 1
+    limit = concurrency
     semaphore = asyncio.Semaphore(limit)
     
-    print(f"* Concurrency limit set to {limit} to avoid GPU contention.")
+    console.print(f"[*] Concurrency limit set to {limit} to avoid GPU resource contention.")
     
     async def run_task(task):
         # Wait for the stop event before starting a new task

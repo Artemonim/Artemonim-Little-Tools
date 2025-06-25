@@ -21,12 +21,13 @@ from typing_extensions import Annotated
 
 from littletools_core.utils import (BatchTimeEstimator, ensure_dir_exists,
                                    format_duration, safe_delete,
-                                   setup_signal_handler)
+                                   setup_signal_handler,
+                                   prompt_for_interactive_settings)
 from littletools_video.ffmpeg_utils import (ProcessingStats,
                                             get_video_duration,
                                             get_video_resolution,
                                             run_ffmpeg_command,
-                                            get_nvenc_hevc_video_options,
+                                            get_nvenc_video_options,
                                             run_tasks_with_semaphore)
 
 # * Create a Typer application for this specific tool
@@ -50,6 +51,7 @@ async def _process_single_file_for_conversion(
     resolution: str,
     normalize_audio: bool,
     overwrite: bool,
+    codec: str,
     stats: ProcessingStats,
     estimator: BatchTimeEstimator,
     position: int,
@@ -85,7 +87,11 @@ async def _process_single_file_for_conversion(
     if fps != "original":
         filters.append(f"fps={fps}")
 
-    video_cmd = get_nvenc_hevc_video_options(quality=quality)
+    # * For H.264, force 8-bit pixel format to avoid errors with 10-bit sources on consumer GPUs.
+    if codec == "h264":
+        filters.append("format=yuv420p")
+
+    video_cmd = get_nvenc_video_options(codec=codec, quality=quality)
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
 
@@ -120,12 +126,13 @@ def convert(
     quality: Annotated[str, typer.Option(help="Encoding quality (CQ value). [26|30|34|40]")] = "26",
     fps: Annotated[str, typer.Option(help="Target FPS. [original|30|60|120]")] = "original",
     resolution: Annotated[str, typer.Option(help="Target resolution (scales down only). [original|480p|720p|1080p|2160p]")] = "original",
+    codec: Annotated[str, typer.Option(help="Video codec for encoding. [hevc|h264]")] = "hevc",
     normalize_audio: Annotated[bool, typer.Option(help="Normalize audio to -16 LUFS.")] = False,
     overwrite: Annotated[bool, typer.Option(help="Overwrite existing files in the output directory.")] = False,
     concurrency: Annotated[int, typer.Option(help="Number of files to process concurrently.")] = 2,
 ):
     """
-    Batch convert all supported videos in a directory to HEVC (H.265).
+    Batch convert videos in a directory to HEVC (H.265) or H.264.
     """
     console.print(f"[*] Starting batch conversion from '{input_dir}' to '{output_dir}'.")
     ensure_dir_exists(input_dir)
@@ -160,7 +167,7 @@ def convert(
 
         tasks = [
             _process_single_file_for_conversion(
-                file, output_dir, quality, fps, resolution, normalize_audio, overwrite,
+                file, output_dir, quality, fps, resolution, normalize_audio, overwrite, codec,
                 stats, estimator, i + 1, len(files_to_process)
             ) for i, file in enumerate(files_to_process)
         ]
@@ -227,38 +234,45 @@ def single():
             output_dir = Path(output_str.strip().strip('"'))
             ensure_dir_exists(output_dir)
 
-        # --- Helper for presenting choices ---
-        def prompt_for_choice(text: str, choices: dict, default: str) -> str:
-            console.print(f"\n[bold]{text}[/bold]")
-            choice_map = {str(i+1): value for i, value in enumerate(choices.values())}
-            for i, (name, value) in enumerate(choices.items()):
-                console.print(f"  [green]{i+1}[/green]. {name}")
-            default_idx_str = "1"
-            for i, value in enumerate(choices.values()):
-                if value == default:
-                    default_idx_str = str(i + 1)
-                    break
-            while True:
-                raw_input = typer.prompt("Your choice", default=default_idx_str)
-                if raw_input in choice_map:
-                    return choice_map[raw_input]
-                console.print(f"[red]Invalid choice. Please enter a number from 1 to {len(choices)}.[/red]")
-
-        # --- Conversion Options ---
-        quality_choices = {
-            "Master (CQ=26)": "26",
-            "Optimal (CQ=30)": "30",
-            "Compact (CQ=34)": "34",
-            "Compressed (CQ=40, <=720p)": "40"
+        # --- Interactive Settings Menu ---
+        initial_settings = {
+            "quality": "26",
+            "fps": "original",
+            "resolution": "original",
+            "codec": "hevc",
+            "normalize_audio": False,
+            "overwrite": False,
         }
-        fps_choices = {"Original": "original", "30 FPS": "30", "60 FPS": "60", "120 FPS": "120"}
-        resolution_choices = {"Original": "original", "480p": "480p", "720p": "720p", "1080p": "1080p", "2160p (4K)": "2160p"}
+        
+        settings_definitions = [
+            {
+                "key": "quality", "label": "Quality", "type": "choice",
+                "choices": {
+                    "Master (CQ=26)": "26", "Optimal (CQ=30)": "30",
+                    "Compact (CQ=34)": "34", "Compressed (CQ=40, <=720p)": "40"
+                }
+            },
+            {
+                "key": "fps", "label": "FPS", "type": "choice",
+                "choices": {"Original": "original", "30 FPS": "30", "60 FPS": "60", "120 FPS": "120"}
+            },
+            {
+                "key": "resolution", "label": "Resolution", "type": "choice",
+                "choices": {"Original": "original", "480p": "480p", "720p": "720p", "1080p": "1080p", "2160p (4K)": "2160p"}
+            },
+            {"key": "normalize_audio", "label": "Normalize Audio", "type": "toggle"},
+            {"key": "overwrite", "label": "Overwrite Files", "type": "toggle"},
+            {"key": "codec", "label": "Codec", "type": "toggle"},
+        ]
+        
+        final_settings = prompt_for_interactive_settings(
+            settings_definitions=settings_definitions,
+            current_settings=initial_settings,
+            title="Conversion Settings"
+        )
 
-        quality = prompt_for_choice("Select encoding quality", quality_choices, default="26")
-        fps = prompt_for_choice("Select target FPS", fps_choices, default="original")
-        resolution = prompt_for_choice("Select target resolution", resolution_choices, default="original")
-        normalize_audio = typer.confirm("\nNormalize audio to -16 LUFS?", default=False)
-        overwrite = typer.confirm(f"Overwrite output file(s) if they exist?", default=False)
+        if final_settings is None:
+            raise typer.Abort()
 
         # --- Run Conversion(s) ---
         stats = ProcessingStats()
@@ -277,11 +291,12 @@ def single():
                     await _process_single_file_for_conversion(
                         file_path=file_path,
                         output_dir=out_dir,
-                        quality=quality,
-                        fps=fps,
-                        resolution=resolution,
-                        normalize_audio=normalize_audio,
-                        overwrite=overwrite,
+                        quality=final_settings['quality'],
+                        fps=final_settings['fps'],
+                        resolution=final_settings['resolution'],
+                        normalize_audio=final_settings['normalize_audio'],
+                        overwrite=final_settings['overwrite'],
+                        codec=final_settings['codec'],
                         stats=stats,
                         estimator=estimator,
                         position=idx,
@@ -314,6 +329,7 @@ async def _convert_single_file_for_merge(
     fps: str,
     resolution: str,
     normalize_audio: bool,
+    codec: str,
     stats: ProcessingStats,
     estimator: BatchTimeEstimator,
     position: int,
@@ -338,7 +354,11 @@ async def _convert_single_file_for_merge(
     if fps != "original":
         filters.append(f"fps={fps}")
         
-    video_cmd = get_nvenc_hevc_video_options(quality=quality)
+    # * For H.264, force 8-bit pixel format to avoid errors with 10-bit sources on consumer GPUs.
+    if codec == "h264":
+        filters.append("format=yuv420p")
+
+    video_cmd = get_nvenc_video_options(codec=codec, quality=quality)
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
         
@@ -373,11 +393,12 @@ def merge(
     quality: Annotated[str, typer.Option(help="Encoding quality for intermediate files. [26|30|34|40]")] = "26",
     fps: Annotated[str, typer.Option(help="Target FPS for intermediate files. [original|30|60|120]")] = "original",
     resolution: Annotated[str, typer.Option(help="Target resolution for intermediate files. [original|480p|720p|1080p|2160p]")] = "original",
+    codec: Annotated[str, typer.Option(help="Video codec for intermediate conversion. [hevc|h264]")] = "hevc",
     normalize_audio: Annotated[bool, typer.Option(help="Normalize audio during intermediate conversion.")] = False,
     cleanup: Annotated[bool, typer.Option("--cleanup-source", help="Delete source files upon successful merge.")] = False,
 ):
     """
-    Convert multiple videos and merge them into a single file.
+    Convert multiple videos (to HEVC/H.264) and merge them into one.
     """
     if len(inputs) < 2:
         console.print("[red]! Merge command requires at least two input files.[/red]")
@@ -410,7 +431,7 @@ def merge(
 
             for i, file_path in enumerate(inputs):
                 result_path = await _convert_single_file_for_merge(
-                    file_path, temp_dir, quality, fps, resolution, normalize_audio,
+                    file_path, temp_dir, quality, fps, resolution, normalize_audio, codec,
                     stats, estimator, i + 1, len(inputs)
                 )
                 if not result_path:

@@ -29,7 +29,7 @@ import signal
 import platform
 import shutil
 from pathlib import Path
-from typing import List, Optional, Union, Callable
+from typing import List, Optional, Union, Callable, Dict, Any
 import send2trash  # * For safe file deletion to recycle bin
 import time
 import typer
@@ -331,6 +331,130 @@ def get_default_io_paths(tool_slug: str = "") -> tuple[Path, Path]:
     return input_dir, output_dir
 
 
+def prompt_for_interactive_settings(
+    settings_definitions: List[Dict[str, Any]],
+    current_settings: Dict[str, Any],
+    title: str = "Settings"
+) -> Optional[Dict[str, Any]]:
+    """
+    Displays a generic interactive menu for configuring a set of options.
+
+    This function provides a reusable, data-driven menu loop that allows users
+    to modify settings before proceeding with an operation. It supports
+    multiple-choice selections and boolean toggles.
+
+    Args:
+        settings_definitions: A list of dictionaries, where each dictionary
+            defines a configurable setting for the menu. Each dictionary
+            should have the following keys:
+            - 'key' (str): The key that corresponds to this setting in the
+              `current_settings` dictionary.
+            - 'label' (str): The human-readable text to display for this setting.
+            - 'type' (str): The type of control. Supported types are:
+              - 'choice': Presents a list of options. Requires 'choices'.
+              - 'toggle': A simple on/off or true/false switch.
+            - 'choices' (Dict[str, str], optional): A dictionary mapping the
+              display name of an option to its actual value. Required for
+              'type' = 'choice'.
+            Example:
+            [
+                {
+                    "key": "quality", "label": "Quality", "type": "choice",
+                    "choices": {"High": "10", "Medium": "20"}
+                },
+                {
+                    "key": "overwrite", "label": "Overwrite", "type": "toggle"
+                }
+            ]
+        current_settings: A dictionary containing the initial values for all
+            settings defined in `settings_definitions`. The keys must match.
+        title: The title to display at the top of the menu.
+
+    Returns:
+        A dictionary with the updated settings if the user decides to proceed
+        (e.g., by selecting 'Start').
+        Returns None if the user chooses to quit or aborts the operation.
+    """
+    console = Console()
+
+    def _prompt_for_choice(label: str, choices: dict, current_value: str) -> str:
+        console.print(f"\n[bold]Select {label}[/bold]")
+        choice_map = {str(i+1): value for i, value in enumerate(choices.values())}
+        for i, (name, value) in enumerate(choices.items()):
+            indicator = "[bold green]✓[/bold green]" if value == current_value else " "
+            console.print(f"  {indicator} [green]{i+1}[/green]. {name}")
+
+        default_idx_str = "1"
+        for i, value in enumerate(choices.values()):
+            if value == current_value:
+                default_idx_str = str(i + 1)
+                break
+
+        while True:
+            raw_input = typer.prompt("Your choice", default=default_idx_str)
+            if raw_input in choice_map:
+                return choice_map[raw_input]
+            console.print(f"[red]Invalid choice. Please enter a number from 1 to {len(choices)}.[/red]")
+
+    while True:
+        console.clear()
+        console.print(f"[bold underline]{title}[/bold underline]")
+
+        for i, definition in enumerate(settings_definitions, 1):
+            key = definition['key']
+            label = definition['label']
+            setting_type = definition['type']
+            current_value = current_settings[key]
+            
+            display_value = ""
+            if setting_type == 'choice':
+                choices = definition['choices']
+                display_value = next((name for name, value in choices.items() if value == current_value), "N/A")
+            elif setting_type == 'toggle':
+                display_value = "On" if current_value else "Off"
+            
+            # Special case for codec toggle to make it more explicit
+            if key == "codec" and setting_type == "toggle":
+                display_value = f"[bold]{'H264' if current_settings['codec'] == 'h264' else 'HEVC'}[/bold] (Toggle)"
+
+            console.print(f" [cyan]{i}.[/cyan] {label:<15} : {display_value}")
+
+        console.print("\n [bold green]S[/bold green]. Start")
+        console.print(" [bold red]Q[/bold red]. Quit")
+        
+        choice = typer.prompt("\nSelect an option to change, or start/quit", default="S").lower()
+
+        if choice == 's':
+            return current_settings
+        elif choice == 'q':
+            return None
+        
+        try:
+            choice_idx = int(choice) - 1
+            if 0 <= choice_idx < len(settings_definitions):
+                selected_def = settings_definitions[choice_idx]
+                key = selected_def['key']
+                setting_type = selected_def['type']
+                
+                if setting_type == 'choice':
+                    current_settings[key] = _prompt_for_choice(
+                        selected_def['label'], selected_def['choices'], current_settings[key]
+                    )
+                elif setting_type == 'toggle':
+                    current_settings[key] = not current_settings[key]
+                
+                # Special handling for codec toggle
+                if key == "codec" and setting_type == "toggle":
+                    current_settings[key] = "h264" if current_settings[key] == "hevc" else "hevc"
+
+            else:
+                 console.print(f"[red]! Invalid choice '{choice}'. Please try again.[/red]")
+                 time.sleep(1.5)
+        except ValueError:
+            console.print(f"[red]! Invalid input. Please enter a number or S/Q.[/red]")
+            time.sleep(1.5)
+
+
 # * Export commonly used functions for easy importing
 __all__ = [
     "is_interrupted",
@@ -352,4 +476,5 @@ __all__ = [
     "prompt_for_path",
     "BatchTimeEstimator",
     "get_default_io_paths",
+    "prompt_for_interactive_settings",
 ] 

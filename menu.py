@@ -31,7 +31,7 @@ from typing import Dict, List, Optional, Tuple
 import signal  # * Better Comments: signal handling for cleanup
 
 # * Import common utilities
-from little_tools_utils import (
+from littletools_core.utils import (
     setup_signal_handler, clear_screen_if_compact, ensure_dir_exists,
     print_separator, print_status, check_command_available, safe_delete
 )
@@ -1017,7 +1017,7 @@ class ToolManager:
         # * Use ffmpeg_utils helpers for progress bar and time estimation
         import asyncio
         from VideoTools.ffmpeg_utils import run_ffmpeg_command, get_video_duration, ProcessingStats
-        from little_tools_utils import BatchTimeEstimator, format_duration
+        from littletools_core.utils import BatchTimeEstimator, format_duration
 
         estimator = BatchTimeEstimator()
         # Calculate total workload for ETA

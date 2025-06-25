@@ -23,7 +23,7 @@ import time
 
 # * Import common utilities
 sys.path.append(str(Path(__file__).parent.parent))
-from little_tools_utils import (
+from littletools_core.utils import (
     setup_signal_handler, is_interrupted, register_cleanup_function,
     ensure_dir_exists, check_command_available, safe_delete,
     format_duration, print_file_info, print_status,

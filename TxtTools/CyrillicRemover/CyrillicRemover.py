@@ -19,7 +19,7 @@ import time
 # ! We need to go up three levels from TxtTools/CyrillicRemover/
 sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
 
-from little_tools_utils import (
+from littletools_core.utils import (
     setup_signal_handler,
     is_interrupted,
     get_files_by_extension,

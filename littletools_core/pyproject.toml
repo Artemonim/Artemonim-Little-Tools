@@ -1,0 +1,9 @@
+[project]
+name = "littletools-core"
+version = "0.1.0"
+description = "Core utilities for LittleTools project"
+authors = [
+    {name = "LittleTools"}
+]
+readme = "README.md"
+requires-python = ">=3.9" 

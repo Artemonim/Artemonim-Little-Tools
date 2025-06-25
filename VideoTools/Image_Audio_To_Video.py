@@ -39,7 +39,7 @@ except ImportError:
 
 # * Import shared utilities
 sys.path.append(str(Path(__file__).parent.parent))
-from little_tools_utils import (  # noqa: E402  pylint: disable=wrong-import-position
+from littletools_core.utils import (  # noqa: E402  pylint: disable=wrong-import-position
     print_separator,
     print_status,
     check_command_available,

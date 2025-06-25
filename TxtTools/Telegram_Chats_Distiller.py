@@ -20,7 +20,7 @@ from pathlib import Path
 
 # * Import common utilities
 sys.path.append(str(Path(__file__).parent.parent))
-from little_tools_utils import setup_signal_handler, print_status
+from littletools_core.utils import setup_signal_handler, print_status
 
 # * Signal handling is now managed by little_tools_utils
 

@@ -28,7 +28,7 @@ from typing import Optional
 
 # * Import common utilities
 sys.path.append(str(Path(__file__).parent.parent))
-from little_tools_utils import (
+from littletools_core.utils import (
     print_separator, print_file_info, ensure_dir_exists,
     clean_partial_output, check_file_exists_with_overwrite,
     format_duration

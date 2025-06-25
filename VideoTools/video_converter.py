@@ -21,7 +21,7 @@ from pathlib import Path
 
 # * Add parent directory to path to allow importing from little_tools_utils and ffmpeg_utils
 sys.path.append(str(Path(__file__).parent.parent))
-from little_tools_utils import get_files_by_extension, print_file_info, check_file_exists_with_overwrite, clean_partial_output, format_duration, BatchTimeEstimator
+from littletools_core.utils import get_files_by_extension, print_file_info, check_file_exists_with_overwrite, clean_partial_output, format_duration, BatchTimeEstimator
 from VideoTools.ffmpeg_utils import (
     run_ffmpeg_command, standard_main, ProcessingStats, 
     run_tasks_with_semaphore, get_video_duration
@@ -169,6 +169,6 @@ if __name__ == "__main__":
     from VideoTools.ffmpeg_utils import (
         standard_main, ProcessingStats, run_tasks_with_semaphore, get_video_duration
     )
-    from little_tools_utils import get_files_by_extension, print_file_info, check_file_exists_with_overwrite, clean_partial_output, format_duration
+    from littletools_core.utils import get_files_by_extension, print_file_info, check_file_exists_with_overwrite, clean_partial_output, format_duration
     
     asyncio.run(main()) 

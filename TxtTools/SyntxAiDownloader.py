@@ -21,7 +21,7 @@ from bs4 import BeautifulSoup
 project_root = Path(__file__).resolve().parent.parent
 sys.path.append(str(project_root))
 
-from little_tools_utils import (
+from littletools_core.utils import (
     setup_signal_handler,
     ensure_dir_exists,
     print_status,

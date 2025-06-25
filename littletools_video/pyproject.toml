@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "littletools-video"
+version = "0.1.0"
+description = "Video processing tools for the LittleTools suite."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "Pillow",
+    "littletools_core @ file:../littletools_core",
+]
+
+[project.scripts]
+ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer_v2:main"
+topaz-merger = "littletools_video.Topaz_Video_Merger:main"
+video-converter = "littletools_video.video_converter:main"
+image-audio-to-video = "littletools_video.Image_Audio_To_Video:main" 

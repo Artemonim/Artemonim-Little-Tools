@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "littletools-txt"
+version = "0.1.0"
+description = "Text processing tools for the LittleTools suite."
+readme = "README.md"
+requires-python = ">=3.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "pypandoc",
+    "requests",
+    "beautifulsoup4",
+    "littletools_core @ file:../littletools_core",
+]
+
+[project.scripts]
+telegram-distiller = "littletools_txt.Telegram_Chats_Distiller:main"
+syntx-downloader = "littletools_txt.SyntxAiDownloader:main"
+wmd-converter = "littletools_txt.WMDconverter:main"
+cyrillic-remover = "littletools_txt.CyrillicRemover:main" 

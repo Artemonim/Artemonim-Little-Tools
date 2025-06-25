@@ -27,7 +27,6 @@ import signal
 from typing import Optional
 
 # * Import common utilities
-sys.path.append(str(Path(__file__).parent.parent))
 from littletools_core.utils import (
     print_separator, print_file_info, ensure_dir_exists,
     clean_partial_output, check_file_exists_with_overwrite,
@@ -291,6 +290,34 @@ def get_metadata_options(audio_tracks, verbose=False):
         
     return metadata_options
 
+def get_nvenc_hevc_video_options(quality: str = "30") -> list[str]:
+    """
+    Returns a list of recommended FFmpeg options for HEVC (NVENC) encoding.
+    
+    These settings are optimized for quality and compatibility based on
+    experimental results.
+    
+    Args:
+        quality: The Constant Quality (CQ) value as a string.
+                 
+    Returns:
+        A list of FFmpeg command-line arguments for video encoding.
+    """
+    return [
+        "-c:v", "hevc_nvenc",
+        "-preset", "hq",
+        "-rc", "vbr_hq",
+        "-cq", quality,
+        "-spatial_aq", "1",
+        "-temporal_aq", "1",
+        "-aq-strength", "8",
+        "-rc-lookahead", "32",
+        "-bf", "4",
+        "-refs", "4",
+        "-b_ref_mode", "middle",
+        "-movflags", "+faststart",
+    ]
+
 async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False, 
                              output_path=None, file_position=None, file_count=None, filename=None,
                              total_duration=None):
@@ -318,6 +345,8 @@ async def run_ffmpeg_command(cmd, stats=None, stats_key="processed", quiet=False
             *cmd,
             stderr=asyncio.subprocess.PIPE
         )
+        # * Guarantee for type checkers that proc.stderr is not None
+        assert proc.stderr is not None
         if stats:
             stats.register_process(proc)
 
@@ -440,6 +469,40 @@ async def get_video_duration(input_path: str) -> Optional[float]:
             return None
     except Exception as e:
         print(f"! Exception getting duration for {Path(input_path).name}: {e}")
+        return None
+
+async def get_video_resolution(input_path: str) -> Optional[tuple[int, int]]:
+    """Get video resolution (width, height) using ffprobe."""
+    ffprobe_cmd = [
+        "ffprobe",
+        "-v", "error",
+        "-select_streams", "v:0",
+        "-show_entries", "stream=width,height",
+        "-of", "csv=s=x:p=0",
+        str(input_path)
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ffprobe_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0 and stdout:
+            res_str = stdout.decode().strip()
+            if 'x' in res_str:
+                width, height = map(int, res_str.split('x'))
+                return width, height
+            else:
+                print(f"! ffprobe returned empty resolution for {Path(input_path).name}")
+                return None
+        else:
+            # ! Don't print error if there's no video stream, it's a valid case for audio-only files.
+            if "Stream specifier v:0 matches no streams" not in stderr.decode():
+                print(f"! ffprobe error getting resolution for {Path(input_path).name}: {stderr.decode()}")
+            return None
+    except Exception as e:
+        print(f"! Exception getting resolution for {Path(input_path).name}: {e}")
         return None
 
 # Async task and signal handling

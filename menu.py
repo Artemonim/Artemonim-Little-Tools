@@ -152,7 +152,7 @@ TOOLS = {
     "video_converter": {
         "name": "Video Converter",
         "description": "Re-encode videos with HEVC (NVENC) with quality and FPS options.",
-        "path": "VideoTools",
+        "path": "littletools_video",
         "script": "video_converter.py",
         "requirements": [],
         "system_deps": ["ffmpeg"],
@@ -161,15 +161,20 @@ TOOLS = {
         "input_extensions": [".mp4", ".mkv", ".mov", ".avi", ".webm"],
         "output_extension": "_converted.mp4",
         "args_template": [
+            "--mode", "convert",
             "-i", "{input_dir}", 
             "-o", "{output_dir}", 
             "--quality", "{quality}", 
             "--fps", "{fps}",
+            "--resolution", "{resolution}",
+            "{normalize_audio_flag}",
             "--overwrite"
         ],
         "needs_dependencies": False,
         "supports_quality_selection": True,
-        "supports_fps_selection": True
+        "supports_fps_selection": True,
+        "supports_resolution_selection": True,
+        "supports_normalize_audio_selection": True
     },
     "image_audio_video": {
         "name": "Image+Audio → Video Creator",
@@ -653,6 +658,19 @@ class ToolManager:
                 fps = ask_fps()
                 print(f"* Selected FPS: {fps}")
 
+            # Ask for resolution if tool supports it
+            resolution = "original"
+            if tool.get("supports_resolution_selection"):
+                resolution = ask_resolution()
+                print(f"* Selected Resolution: {resolution}")
+            
+            # Ask for audio normalization if tool supports it
+            normalize_audio_flag = ""
+            if tool.get("supports_normalize_audio_selection"):
+                if ask_normalize_audio():
+                    normalize_audio_flag = "--normalize-audio"
+                print(f"* Audio Normalization: {'Enabled' if normalize_audio_flag else 'Disabled'}")
+
             # Ask for cyrillic mode if tool supports it
             cyrillic_mode = "1" # Default
             if tool.get("supports_cyrillic_mode_selection"):
@@ -677,6 +695,11 @@ class ToolManager:
                     processed_args.append(quality)
                 elif a == "{fps}":
                     processed_args.append(fps)
+                elif a == "{resolution}":
+                    processed_args.append(resolution)
+                elif a == "{normalize_audio_flag}":
+                    if normalize_audio_flag:
+                        processed_args.append(normalize_audio_flag)
                 elif a == "{mode}":
                     processed_args.append(cyrillic_mode)
                 elif a == "--overwrite":
@@ -995,15 +1018,19 @@ class ToolManager:
         # 3. Ask for quality and FPS
         quality = ask_quality()
         fps = ask_fps()
+        resolution = ask_resolution()
+        normalize_audio = ask_normalize_audio()
         print(f"* Selected quality (CQ): {quality}")
-        print(f"* Selected FPS: {fps}\n")
+        print(f"* Selected FPS: {fps}")
+        print(f"* Selected Resolution: {resolution}")
+        print(f"* Audio Normalization: {'Enabled' if normalize_audio else 'Disabled'}\n")
 
         # 4. Prepare temporary directory for intermediate conversions
         temp_dir = OUTPUT_DIR / "__merge_temp__"
         
         # * Use ffmpeg_utils helpers for progress bar and time estimation
         import asyncio
-        from VideoTools.ffmpeg_utils import run_ffmpeg_command, get_video_duration, ProcessingStats
+        from littletools_video.ffmpeg_utils import run_ffmpeg_command, get_video_duration, ProcessingStats, get_video_resolution
         from littletools_core.utils import BatchTimeEstimator, format_duration
 
         estimator = BatchTimeEstimator()
@@ -1039,16 +1066,41 @@ class ToolManager:
                     "-cq", quality, "-spatial_aq", "1", "-temporal_aq", "1",
                     "-aq-strength", "8", "-rc-lookahead", "32", "-bf", "4",
                     "-refs", "4", "-b_ref_mode", "middle", "-movflags", "+faststart",
-                    "-c:a", "copy",
                 ]
-                if quality == "40":
-                    filters = ["scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',flags=lanczos"]
-                    if fps != "original":
-                        filters.append(f"fps={fps}")
+                
+                # Build filters
+                filters = []
+                # Resolution scaling
+                if resolution != "original":
+                    res_map = {"480p": 480, "720p": 720, "1080p": 1080, "2160p": 2160}
+                    target_height = res_map.get(resolution)
+                    if target_height:
+                         # We need to get original resolution to avoid upscaling
+                        try:
+                            resolution_result = asyncio.run(get_video_resolution(str(src_path)))
+                            if resolution_result:
+                                w, h = resolution_result
+                                if h > target_height:
+                                    filters.append(f"scale=-2:{target_height}:flags=lanczos")
+                        except Exception:
+                            # Fallback if we can't get resolution: just apply it
+                            filters.append(f"scale=-2:{target_height}:flags=lanczos")
+                
+                elif quality == "40":
+                    filters.append("scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',flags=lanczos")
+
+                if fps != "original":
+                    filters.append(f"fps={fps}")
+                
+                if filters:
                     cmd.extend(["-vf", ",".join(filters)])
+                
+                # Audio settings
+                if normalize_audio:
+                    cmd.extend(["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"])
                 else:
-                    if fps != "original":
-                        cmd.extend(["-vf", f"fps={fps}"])
+                    cmd.extend(["-c:a", "copy"])
+
                 cmd.append(str(converted_path))
 
                 total_duration = None
@@ -1251,6 +1303,40 @@ def ask_fps() -> str:
             else: print("! Invalid choice. Please enter a number from 1 to 4.")
         except KeyboardInterrupt:
             return "original" # Default on interrupt
+
+def ask_resolution() -> str:
+    """Ask user to select output resolution."""
+    print("\nSelect target resolution (scales down only):")
+    print("  1. Original")
+    print("  2. 480p")
+    print("  3. 720p")
+    print("  4. 1080p")
+    print("  5. 4K (2160p)")
+    
+    while True:
+        try:
+            choice = input("Enter your choice (1-5): ").strip()
+            if choice == '1': return "original"
+            elif choice == '2': return "480p"
+            elif choice == '3': return "720p"
+            elif choice == '4': return "1080p"
+            elif choice == '5': return "2160p"
+            else: print("! Invalid choice. Please enter a number from 1 to 5.")
+        except KeyboardInterrupt:
+            return "original" # Default on interrupt
+
+def ask_normalize_audio() -> bool:
+    """Ask user if they want to normalize audio."""
+    while True:
+        try:
+            choice = input("\nEnable audio normalization to -3dB? (y/N): ").strip().lower()
+            if choice in ['y', 'yes']:
+                return True
+            if choice in ['n', 'no', '']:
+                return False
+            print("! Invalid choice. Please enter 'y' or 'n'.")
+        except KeyboardInterrupt:
+            return False
 
 def ask_output_format(tool_id: str) -> str:
     """Ask user to select output format for tools that support it."""

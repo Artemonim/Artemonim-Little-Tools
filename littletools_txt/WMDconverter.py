@@ -5,8 +5,6 @@ import pypandoc
 import argparse
 
 # Configuration variables
-SOURCE_PATH = "PATH_TO_SOURCE_FILE"  # Путь к исходному файлу по умолчанию
-OUTPUT_PATH = "PATH_TO_OUTPUT_FILE"   # Путь к выходному файлу по умолчанию
 MEDIA_DIR = "media"         # Папка для хранения изображений по умолчанию
 
 
@@ -73,13 +71,13 @@ def parse_arguments():
     )
     parser.add_argument(
         "--source",
-        default=SOURCE_PATH,
-        help="Путь к исходному файлу (по умолчанию: input.docx)"
+        required=True,
+        help="Путь к исходному файлу (e.g., input.docx)"
     )
     parser.add_argument(
         "--output",
-        default=OUTPUT_PATH,
-        help="Путь к выходному файлу (по умолчанию: output.md)"
+        required=True,
+        help="Путь к выходному файлу (e.g., output.md)"
     )
     parser.add_argument(
         "--media-dir",
@@ -113,7 +111,3 @@ def main():
         print(f"Ошибка: {e}")
     except Exception as e:
         print(f"Произошла ошибка при конвертации: {e}")
-
-
-if __name__ == "__main__":
-    main()

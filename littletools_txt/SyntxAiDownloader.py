@@ -17,20 +17,16 @@ from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
 
-# * Add project root to path to allow importing little_tools_utils
-project_root = Path(__file__).resolve().parent.parent
-sys.path.append(str(project_root))
-
 from littletools_core.utils import (
-    setup_signal_handler,
     ensure_dir_exists,
-    print_status,
+    is_interrupted,
     print_separator,
-    is_interrupted
+    print_status,
+    setup_signal_handler,
 )
 
 # * Constants
-BASE_OUTPUT_DIR = project_root / "0-OUTPUT-0"
+BASE_OUTPUT_DIR = Path.cwd()  # Output to current working directory
 URL_PATTERN = re.compile(r"https?://(llmshare\.syntxai\.net|llmchat\.syntxai\.net)/([a-f0-9-]+)", re.IGNORECASE)
 
 def get_url_from_user() -> str:
@@ -45,8 +41,11 @@ def get_url_from_user() -> str:
 def get_output_filename(url_id: str) -> str:
     """Prompts the user for an output filename, suggesting a default."""
     default_name = f"syntxai_{url_id}.md"
-    filename = input(f"? Enter the output filename (or press Enter for default: {default_name}): ").strip() + ".md"
-    return filename or default_name
+    user_input = input(f"? Enter the output filename (or press Enter for default: {default_name}): ").strip()
+    if not user_input:
+        return default_name
+    filename = user_input if user_input.lower().endswith(".md") else f"{user_input}.md"
+    return filename
 
 def fetch_and_parse_content(url: str) -> str:
     """Fetches HTML from the URL and parses out the markdown content."""
@@ -234,5 +233,4 @@ def main():
     print_separator("═", 60)
     print_status("Operation finished.", "success")
 
-if __name__ == "__main__":
-    main() 
+# (Removed standalone execution block reliant on __main__) 

@@ -15,10 +15,6 @@ import sys
 from pathlib import Path
 import time
 
-# * Add the project root to the path to allow importing from little_tools_utils
-# ! We need to go up three levels from TxtTools/CyrillicRemover/
-sys.path.append(str(Path(__file__).resolve().parent.parent.parent))
-
 from littletools_core.utils import (
     setup_signal_handler,
     is_interrupted,
@@ -247,7 +243,3 @@ def main():
     print(f"Errors: {stats['errors']}")
     print(f"Total time: {format_duration(duration)}")
     print_separator()
-
-
-if __name__ == "__main__":
-    main() 

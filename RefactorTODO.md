@@ -21,20 +21,20 @@
 -   [x] Удалить `TxtTools/MultipleTextComparator` из репозитория `LittleTools`.
 -   [x] Удалить запись о `"infinite_differ"` из словаря `TOOLS` в `menu.py`.
 
-### 3. [ ] Группировка оставшихся утилит в пакеты
+### 3. [X] Группировка оставшихся утилит в пакеты
 
--   [ ] **Пакет `littletools-video`:**
-    -   [ ] Создать директорию `littletools_video`.
-    -   [ ] Переместить туда скрипты из `VideoTools` (`FFMPEG_MKV_audio_normalizer_v2.py`, `Topaz_Video_Merger.py`, `video_converter.py`, `Image_Audio_To_Video.py`) и общие видео-утилиты (`ffmpeg_utils.py`).
-    -   [ ] Создать `littletools_video/pyproject.toml`. В зависимостях указать `Pillow`. В `entry_points` определить консольные скрипты для каждого инструмента.
--   [ ] **Пакет `littletools-speech` (для Whisper Transcriber):**
-    -   [ ] Создать директорию `littletools_speech`.
-    -   [ ] Переместить `Audio-_Video-2-Text/whisper_transcriber.py` в новую директорию.
-    -   [ ] Создать `littletools_speech/pyproject.toml`. Указать тяжелые зависимости (`torch`, `openai-whisper`, `ffmpeg-python`). Определить `entry_point`.
--   [ ] **Пакет `littletools-txt` (для остальных текстовых утилит):**
-    -   [ ] Создать директорию `littletools_txt`.
-    -   [ ] Переместить туда `Telegram_Chats_Distiller.py`, `SyntxAiDownloader.py`, `WMDconverter/WMDconverter.py`, `CyrillicRemover/CyrillicRemover.py`.
-    -   [ ] Создать `littletools_txt/pyproject.toml`. Указать зависимости (`pypandoc`, `requests`, `beautifulsoup4`). Определить `entry_points` для каждого скрипта.
+-   [x] **Пакет `littletools-video`:**
+    -   [x] Создать директорию `littletools_video`.
+    -   [x] Переместить туда скрипты из `VideoTools` (`FFMPEG_MKV_audio_normalizer_v2.py`, `Topaz_Video_Merger.py`, `video_converter.py`, `Image_Audio_To_Video.py`) и общие видео-утилиты (`ffmpeg_utils.py`).
+    -   [x] Создать `littletools_video/pyproject.toml`. В зависимостях указать `Pillow`. В `entry_points` определить консольные скрипты для каждого инструмента.
+-   [x] **Пакет `littletools-speech` (для Whisper Transcriber):**
+    -   [x] Создать директорию `littletools_speech`.
+    -   [x] Переместить `Audio-_Video-2-Text/whisper_transcriber.py` в новую директорию.
+    -   [x] Создать `littletools_speech/pyproject.toml`. Указать тяжелые зависимости (`torch`, `openai-whisper`, `ffmpeg-python`). Определить `entry_point`.
+-   [x] **Пакет `littletools-txt` (для остальных текстовых утилит):**
+    -   [x] Создать директорию `littletools_txt`.
+    -   [x] Переместить туда `Telegram_Chats_Distiller.py`, `SyntxAiDownloader.py`, `WMDconverter/WMDconverter.py`, `CyrillicRemover/CyrillicRemover.py`.
+    -   [x] Создать `littletools_txt/pyproject.toml`. Указать зависимости (`pypandoc`, `requests`, `beautifulsoup4`). Определить `entry_points` для каждого скрипта.
 
 ### 4. [ ] Рефакторинг `menu.py` в `littletools-cli`
 
@@ -44,6 +44,8 @@
     -   [ ] Удалить огромный словарь `TOOLS`.
     -   [ ] Удалить всю логику по установке зависимостей, созданию venv, проверке системных утилит (это теперь задача `pip` и пользователя).
     -   [ ] Реализовать динамический поиск установленных "плагинов" через `importlib.metadata`. Скрипт должен искать все пакеты, у которых есть `entry_point` в группе `"littletools.commands"`.
+    -   [ ] **Перенести логику диалогов из `menu.py` в сами инструменты, используя декларативный подход (например, с помощью `Typer` или `Click`). Инструменты должны сами описывать свои аргументы, а центральный CLI-раннер должен использовать эту информацию для автоматической генерации интерактивных диалогов, если аргументы не были переданы напрямую.**
+    -   [ ] Реализовать поддержку сложных сценариев, таких как `compile` в `video_converter`, который требует несколько входных файлов (`--inputs`) и не вписывается в простую модель "один файл/папка на входе".
     -   [ ] Меню должно строиться на основе найденных `entry_points`.
 -   [ ] Создать `littletools_cli/pyproject.toml`. Зависимостью будет `littletools-core`. Определить `entry_point` для запуска самого меню (например, `lt-menu`).
 

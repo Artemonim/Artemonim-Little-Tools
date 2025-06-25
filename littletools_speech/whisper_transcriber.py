@@ -20,9 +20,10 @@ import tqdm # type: ignore
 from typing import Optional, Tuple # Added for type hinting
 import re
 import time
+import io
+from contextlib import redirect_stdout
 
 # * Import common utilities
-sys.path.append(str(Path(__file__).parent.parent))
 from littletools_core.utils import (
     setup_signal_handler, is_interrupted, register_cleanup_function,
     ensure_dir_exists, check_command_available, safe_delete,
@@ -138,9 +139,7 @@ def transcribe_file(file_path: Path, model, output_dir: Path, estimator: BatchTi
         transcribe_args = {'temperature': TEMPERATURE, 'verbose': True}
 
         if total_duration:
-            from contextlib import redirect_stdout
-
-            class TqdmWriter:
+            class TqdmWriter(io.TextIOBase):
                 def __init__(self, total):
                     self.pbar = tqdm.tqdm(
                         total=total, 
@@ -160,12 +159,14 @@ def transcribe_file(file_path: Path, model, output_dir: Path, estimator: BatchTi
                         current = end_hours * 3600 + end_minutes * 60 + end_seconds
                         self.pbar.n = current
                         self.pbar.refresh()
+                    return len(text)
                 def flush(self):
                     pass
 
             writer = TqdmWriter(total_duration)
             # Capture Whisper's stdout to parse timestamps
-            with redirect_stdout(writer):
+            from typing import cast, TextIO
+            with redirect_stdout(cast(TextIO, writer)):
                 result = model.transcribe(str(audio_to_transcribe), **transcribe_args)
             writer.pbar.close()
         else:
@@ -471,8 +472,5 @@ def main():
     # * Play success notification
     play_sound(SUCCESS_SOUND_PATH)
 
-if __name__ == "__main__":
-    # For ffmpeg-python to find ffmpeg when script is frozen by PyInstaller
-    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
-        os.environ['PATH'] = sys._MEIPASS + os.pathsep + os.environ.get('PATH', '')
-    main() 
+# * Play success notification
+play_sound(SUCCESS_SOUND_PATH) 

@@ -61,7 +61,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(
         description="Normalize audio in MKV files using ffmpeg's loudnorm filter",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog=__doc__.split("\n\n")[3]  # Extract the Usage section from docstring
+        epilog=(__doc__ or "").split("\n\n")[3] if (__doc__ or "").count("\n\n") >= 4 else None
     )
     
     parser.add_argument("-i", "--input", 

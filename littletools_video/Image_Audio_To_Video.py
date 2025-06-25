@@ -31,56 +31,22 @@ import sys
 from pathlib import Path
 from typing import Tuple
 
-try:
-    from PIL import Image  # type: ignore
-except ImportError:
-    print("! Pillow is not installed. Please run the tool setup from the main menu to install dependencies.")
-    sys.exit(1)
-
-# * Import shared utilities
-sys.path.append(str(Path(__file__).parent.parent))
-from littletools_core.utils import (  # noqa: E402  pylint: disable=wrong-import-position
+from PIL import Image
+from littletools_core.utils import (
+    check_command_available,
     print_separator,
     print_status,
-    check_command_available,
 )
-
-# * Async FFmpeg helpers with progress bar
-from VideoTools.ffmpeg_utils import (  # noqa: E402  pylint: disable=wrong-import-position
-    run_ffmpeg_command,
+from .ffmpeg_utils import (
     get_video_duration,
+    run_ffmpeg_command,
+    get_nvenc_hevc_video_options,
 )
 
 
 MAX_DIMENSION = 2160  # * The longer side must not exceed this value (in pixels)
 FPS = 10  # * Target frames per second
-# * FFmpeg NVENC encoding parameters (kept in one place for easier tweaks)
-FFMPEG_VIDEO_OPTS = [
-    "-c:v",
-    "hevc_nvenc",
-    "-preset",
-    "hq",
-    "-rc",
-    "vbr_hq",
-    "-cq",
-    "30",
-    "-spatial_aq",
-    "1",
-    "-temporal_aq",
-    "1",
-    "-aq-strength",
-    "8",
-    "-rc-lookahead",
-    "32",
-    "-bf",
-    "4",
-    "-refs",
-    "4",
-    "-b_ref_mode",
-    "middle",
-    "-movflags",
-    "+faststart",
-]
+# * FFmpeg NVENC encoding parameters are now fetched from ffmpeg_utils
 
 
 def _ask_path(prompt: str) -> Path:
@@ -137,7 +103,7 @@ def _build_ffmpeg_cmd(image: Path, audio: Path, output: Path) -> list[str]:
         str(audio),
         "-vf",
         vf,
-        *FFMPEG_VIDEO_OPTS,
+        *get_nvenc_hevc_video_options(),
         "-c:a",
         "aac",
         "-ar",
@@ -230,10 +196,3 @@ def main() -> None:
             break
 
     print("\nReturning to LittleTools menu…")
-
-
-if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("\nExited by user.")

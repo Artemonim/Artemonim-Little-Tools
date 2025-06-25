@@ -43,7 +43,7 @@ def parse_arguments():
     """Parse command line arguments."""
     parser = argparse.ArgumentParser(
         description="Normalize audio and replace video stream using dual input files",
-        epilog=__doc__.split("\n")[3]
+        epilog=(__doc__ or "").split("\n")[3] if (__doc__ or "").count("\n") >= 4 else None
     )
     parser.add_argument("-i1", "--input-primary", required=True,
                         help="Primary input file (provides audio/subtitles)")

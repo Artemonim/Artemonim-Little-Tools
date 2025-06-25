@@ -19,7 +19,6 @@ import sys
 from pathlib import Path
 
 # * Import common utilities
-sys.path.append(str(Path(__file__).parent.parent))
 from littletools_core.utils import setup_signal_handler, print_status
 
 # * Signal handling is now managed by little_tools_utils
@@ -121,6 +120,3 @@ def main():
 
     success = process_telegram_chat_export(input_file, output_file)
     sys.exit(0 if success else 1)
-
-if __name__ == "__main__":
-    main()

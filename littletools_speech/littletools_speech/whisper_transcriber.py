@@ -14,6 +14,7 @@ from rich.console import Console
 from typing_extensions import Annotated
 
 from littletools_core.utils import ensure_dir_exists, setup_signal_handler
+from littletools_core.huggingface_utils import download_hf_model
 import whisper
 import torch
 from tqdm import tqdm
@@ -33,13 +34,25 @@ SUPPORTED_EXTENSIONS = [
     ".mp4", ".mkv", ".mov", ".avi", ".webm"
 ]
 
+# * Map friendly model names to Hugging Face Hub repository IDs
+WHISPER_HF_MODELS = {
+    "tiny": "openai/whisper-tiny",
+    "base": "openai/whisper-base",
+    "small": "openai/whisper-small",
+    "medium": "openai/whisper-medium",
+    "large": "openai/whisper-large",
+    "large-v1": "openai/whisper-large",
+    "large-v2": "openai/whisper-large-v2",
+    "large-v3": "openai/whisper-large-v3",
+}
+
 # --- Main Command ---
 
 @app.command()
 def run(
     input_dir: Annotated[Path, typer.Option("--input", "-i", help="Input directory containing media files.")] = INPUT_DIR,
     output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for transcriptions.")] = OUTPUT_DIR,
-    model_name: Annotated[str, typer.Option("--model", help="Name of the Whisper model to use.")] = "large-v3",
+    model_name: Annotated[str, typer.Option("--model", help="Name of the Whisper model to use (e.g., 'large-v3').")] = "large-v3",
     output_format: Annotated[str, typer.Option("--format", help="Output format for the transcription. [all|srt|vtt|txt|json]")] = "all",
     language: Annotated[str, typer.Option(help="Language spoken in the audio. (e.g., 'en', 'ru')")] = "ru",
     overwrite: Annotated[bool, typer.Option(help="Overwrite existing transcription files.")] = False,
@@ -57,10 +70,19 @@ def run(
     if device == "cuda" and not torch.cuda.is_available():
         console.print("[red]! CUDA device selected, but it is not available. Aborting.[/red]")
         raise typer.Exit(code=1)
+    
+    # * Resolve model name to a Hugging Face Hub repo ID
+    repo_id = WHISPER_HF_MODELS.get(model_name.lower())
+    if not repo_id:
+        console.print(f"[red]! Invalid model name: '{model_name}'[/red]")
+        console.print(f"  Available models: {', '.join(WHISPER_HF_MODELS.keys())}")
+        raise typer.Exit(code=1)
 
     try:
-        model = whisper.load_model(model_name, device=device)
-        console.print(f"[*] Whisper model '{model_name}' loaded successfully.")
+        # * Download the model from Hugging Face Hub, which returns the local path
+        model_path = download_hf_model(repo_id=repo_id)
+        model = whisper.load_model(model_path, device=device)
+        console.print(f"[*] Whisper model '{model_name}' loaded successfully from local path.")
     except Exception as e:
         console.print(f"[red]! Failed to load Whisper model: {e}[/red]")
         raise typer.Exit(code=1)
@@ -73,8 +95,9 @@ def run(
 
     console.print(f"[*] Found {len(files_to_process)} media file(s) to process.")
     
-    for i, file_path in enumerate(files_to_process):
-        console.print(f"\n--- Processing [{i+1}/{len(files_to_process)}]: {file_path.name} ---")
+    progress_bar = tqdm(files_to_process, desc="Transcribing files", unit="file")
+    for file_path in progress_bar:
+        progress_bar.set_description(f"Processing {file_path.name}")
         
         # Check for existing files
         output_exists = False
@@ -88,16 +111,16 @@ def run(
             continue
             
         try:
-            # The 'verbose=True' option provides progress updates.
-            result = model.transcribe(str(file_path), language=language, verbose=True, temperature=0.25)
+            # * The 'verbose=False' is recommended when using a progress bar like tqdm
+            result = model.transcribe(str(file_path), language=language, verbose=False, temperature=0.25)
             
             writer = whisper.utils.get_writer(output_format, str(output_dir))
             writer(result, str(file_path.stem))
             
-            console.print(f"  -> [green]✓ Transcription successful.[/green] Output format(s): {output_format}")
+            console.print(f"\n  -> [green]✓ Transcription successful for {file_path.name}.[/green] Output format(s): {output_format}")
             
         except Exception as e:
-            console.print(f"  -> [red]✗ Error during transcription: {e}[/red]")
+            console.print(f"\n  -> [red]✗ Error during transcription for {file_path.name}: {e}[/red]")
 
     console.print("\n[green]✓ Transcription process completed.[/green]")
 

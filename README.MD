@@ -437,3 +437,15 @@ It enables reading all labels and issues, editing existing issues, and creating 
 **Usage:**
 
 Add the `.cursor` folder to your repository and read [ghsync_Readme.md](/AgentTools/GithubIssueSynchronizationScript/.cursor/Gitdata/ghsync_Readme.md).
+
+## 🚀 Quick Start
+
+1. **Clone** this repository
+2. **Run the setup script:**
+    - Windows: `start.ps1` or `start.bat`
+    - The script automatically detects your GPU and installs appropriate dependencies
+3. **Launch** the interactive menu and select your tool
+
+**GPU Support:** The setup script automatically detects NVIDIA GPUs and installs PyTorch with CUDA support for GPU-accelerated tools like `ben2-remover`.
+
+## 📦 Available Tools

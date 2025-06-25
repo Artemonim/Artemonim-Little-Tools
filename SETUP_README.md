@@ -1,130 +1,89 @@
 # LittleTools Setup Guide
 
-This guide helps you set up the LittleTools environment for optimal performance and ease of use.
+This guide explains how to set up and run LittleTools on your system.
 
-## Quick Start (Recommended)
+## Quick Start
 
-### Windows Users
+1. **Clone or download** this repository to your local machine
+2. **Run the setup script:**
+    - On Windows: Double-click `start.bat` or run `start.ps1` in PowerShell
+    - The script will automatically detect your system and install everything needed
 
-1. **Download/Clone** the LittleTools repository
-2. **Open PowerShell** in the LittleTools directory
-3. **Run the setup script**:
+## System Requirements
 
-    ```powershell
-    .\start.ps1
-    ```
+-   **Python 3.11** (the script will help you install it if missing)
+-   **Windows** (primary support), Linux/macOS (experimental)
+-   **For GPU-accelerated tools (like ben2-remover):**
+    -   NVIDIA GPU with CUDA support
+    -   NVIDIA drivers installed
+    -   The setup script automatically detects NVIDIA GPUs and installs PyTorch with CUDA support
 
-    Or if you prefer batch files:
+## What the Setup Script Does
 
-    ```cmd
-    start.bat
-    ```
+The `start.ps1` script automatically:
 
-The setup script will automatically:
+1. **Detects Python 3.11** and guides installation if missing
+2. **Creates a virtual environment** to isolate dependencies
+3. **Detects NVIDIA GPU** presence using `nvidia-smi`
+4. **Installs PyTorch:**
+    - **With CUDA 12.1 support** if NVIDIA GPU is detected
+    - **CPU-only version** as fallback if no GPU is found
+5. **Installs all LittleTools packages** and their dependencies
+6. **Verifies installation** and shows CUDA availability status
 
--   ✅ Check Python 3.8+ installation
--   ✅ Create virtual environment with proper pip setup
--   ✅ Handle common environment issues
--   ✅ Launch the interactive menu
+## GPU Support Information
 
-### Manual Setup (All Platforms)
+-   **ben2-remover** requires a CUDA-capable NVIDIA GPU for background removal
+-   **Other tools** work on both CPU and GPU systems
+-   The setup script automatically installs the appropriate PyTorch version
+-   If you have an NVIDIA GPU but CUDA isn't working, check:
+    -   NVIDIA drivers are up to date
+    -   Windows recognizes your GPU (`nvidia-smi` command works)
 
-If the automatic setup doesn't work or you prefer manual control:
+## Manual Setup (Advanced Users)
 
-```bash
-# 1. Ensure Python 3.8+ is installed
-python --version
+If you prefer manual installation:
 
-# 2. Create virtual environment
-python -m venv .venv --upgrade-deps
+```powershell
+# Create virtual environment
+python -m venv .venv
 
-# 3. Run the menu
-python menu.py
+# Activate it
+.venv\Scripts\Activate.ps1
+
+# Install PyTorch with CUDA (if you have NVIDIA GPU)
+pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# Install LittleTools packages
+pip install -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video
 ```
 
 ## Troubleshooting
 
-### "Python not found"
+### "CUDA device is not available" Error
 
--   Install Python 3.8+ from [python.org](https://python.org)
--   Ensure Python is added to your system PATH
--   Restart your terminal after installation
+-   Ensure you have an NVIDIA GPU
+-   Update NVIDIA drivers
+-   Run the setup script again to reinstall PyTorch with CUDA support
 
-### "pip not found in virtual environment"
+### Python Version Issues
 
-The new setup scripts handle this automatically. If using manual setup:
+-   The script requires Python 3.11 specifically
+-   Use `py -3.11` if you have multiple Python versions
 
-```bash
-# Delete existing .venv and recreate
-rm -rf .venv  # or rmdir /s .venv on Windows
-python -m venv .venv --upgrade-deps
+### Permission Issues
 
-# Or bootstrap pip manually
-.venv/Scripts/python -m ensurepip --upgrade  # Windows
-.venv/bin/python -m ensurepip --upgrade      # Linux/macOS
-```
+-   Run PowerShell as Administrator if needed
+-   Check Windows execution policy: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
-### "Permission denied" or "Execution policy" errors (Windows)
+## Getting Help
 
-Run PowerShell as Administrator and execute:
+If you encounter issues:
 
-```powershell
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-```
-
-### "FFmpeg not found" (for video tools)
-
-Install FFmpeg system-wide:
-
--   **Windows**: `winget install ffmpeg` or download from [ffmpeg.org](https://ffmpeg.org)
--   **macOS**: `brew install ffmpeg`
--   **Linux**: `sudo apt install ffmpeg` (Ubuntu/Debian)
-
-## Advanced Options
-
-### Force Recreation of Environment
-
-If you encounter persistent issues:
-
-```powershell
-.\start.ps1 -Force
-```
-
-### Manual Dependency Installation
-
-Dependencies are now managed centrally through `menu.py`. Use the interactive menu to install tool dependencies:
-
-```bash
-python menu.py
-# Select option: "Install/Setup tool dependencies"
-```
-
-For manual installation of core utilities:
-
-```bash
-# Activate virtual environment first
-.venv/Scripts/activate  # Windows
-source .venv/bin/activate  # Linux/macOS
-
-# Install core dependencies
-pip install send2trash>=1.8.0
-```
-
-## System Requirements
-
-### Minimum
-
--   Python 3.8+
--   2GB RAM
--   1GB free disk space
-
-### Recommended for Whisper Transcriber
-
--   Python 3.9+
--   8GB RAM
--   CUDA-compatible GPU
--   FFmpeg installed system-wide
--   5GB free disk space (for models)
+1. Check the console output for specific error messages
+2. Ensure all system requirements are met
+3. Try the "Force Reinstall" option in the setup menu
+4. Create an issue in the repository with your error logs
 
 ## Directory Structure
 
@@ -151,10 +110,10 @@ LittleTools/
 
 LittleTools now uses a unified architecture:
 
-- **Centralized Dependencies**: All tool dependencies are managed in `menu.py`
-- **Common Utilities**: Shared functionality in `little_tools_utils.py`
-- **Safe File Operations**: Files are moved to recycle bin instead of permanent deletion
-- **Cross-platform Compatibility**: Improved support for Windows, macOS, and Linux
+-   **Centralized Dependencies**: All tool dependencies are managed in `menu.py`
+-   **Common Utilities**: Shared functionality in `little_tools_utils.py`
+-   **Safe File Operations**: Files are moved to recycle bin instead of permanent deletion
+-   **Cross-platform Compatibility**: Improved support for Windows, macOS, and Linux
 
 ## Getting Help
 

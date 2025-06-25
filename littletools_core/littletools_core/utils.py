@@ -32,6 +32,8 @@ from pathlib import Path
 from typing import List, Optional, Union, Callable
 import send2trash  # * For safe file deletion to recycle bin
 import time
+import typer
+from rich.console import Console
 
 # * Better Comments:
 # * Important
@@ -42,6 +44,10 @@ import time
 # * Global variables for signal handling
 _interrupted = False
 _cleanup_functions: List[Callable] = []
+
+# * Default directories used across all tools
+DEFAULT_INPUT_DIR_NAME = "0-INPUT-0"
+DEFAULT_OUTPUT_DIR_NAME = "0-OUTPUT-0"
 
 
 def is_interrupted() -> bool:
@@ -218,6 +224,51 @@ def create_backup_name(file_path: Union[str, Path], suffix: str = "_backup") -> 
     return file_path.parent / f"{file_path.stem}{suffix}{file_path.suffix}"
 
 
+def prompt_for_path(
+    prompt_message: str,
+    default: Optional[Union[str, Path]] = None,
+    must_exist: bool = True,
+    file_okay: bool = True,
+    dir_okay: bool = True,
+) -> Path:
+    """
+    Interactively prompts the user for a path, validates it, and returns it.
+
+    Args:
+        prompt_message: The message to display to the user.
+        default: An optional default path to suggest.
+        must_exist: If True, the path must exist.
+        file_okay: If True, the path can be a file.
+        dir_okay: If True, the path can be a directory.
+
+    Returns:
+        A resolved pathlib.Path object.
+    """
+    console = Console()
+    while True:
+        path_str = typer.prompt(prompt_message, default=str(default) if default else None)
+        cleaned_path_str = path_str.strip().strip('"').strip("'")
+        if not cleaned_path_str:
+            console.print("[red]! Path cannot be empty.[/red]")
+            continue
+
+        resolved_path = Path(cleaned_path_str).resolve()
+
+        if must_exist and not resolved_path.exists():
+            console.print(f"[red]! Path not found: '{resolved_path}'[/red]. Please try again.")
+            continue
+
+        if not file_okay and resolved_path.is_file():
+            console.print(f"[red]! Path must be a directory, not a file: '{resolved_path}'[/red].")
+            continue
+
+        if not dir_okay and resolved_path.is_dir():
+            console.print(f"[red]! Path must be a file, not a directory: '{resolved_path}'[/red].")
+            continue
+
+        return resolved_path
+
+
 class BatchTimeEstimator:
     """Estimate remaining time for a batch process based on workload."""
 
@@ -263,6 +314,23 @@ class BatchTimeEstimator:
         return format_duration(estimated_seconds)
 
 
+def get_default_io_paths(tool_slug: str = "") -> tuple[Path, Path]:
+    """Return default input and output directory Path objects.
+
+    Args:
+        tool_slug: Optional sub-directory or suffix to append inside the output directory.
+
+    Returns:
+        (input_dir, output_dir)
+    """
+    cwd = Path.cwd()
+    input_dir = cwd / DEFAULT_INPUT_DIR_NAME
+    output_dir = cwd / DEFAULT_OUTPUT_DIR_NAME
+    if tool_slug:
+        output_dir = output_dir / tool_slug
+    return input_dir, output_dir
+
+
 # * Export commonly used functions for easy importing
 __all__ = [
     "is_interrupted",
@@ -281,5 +349,7 @@ __all__ = [
     "get_platform_info",
     "check_command_available",
     "create_backup_name",
+    "prompt_for_path",
     "BatchTimeEstimator",
+    "get_default_io_paths",
 ] 

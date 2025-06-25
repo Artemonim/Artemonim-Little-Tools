@@ -82,9 +82,14 @@ def post_execution_dialog() -> str:
 
 def show_tool_menu(tool_name: str, tool_app: typer.Typer):
     """Displays the menu for a specific tool group."""
-    # Convert the Typer app to a Click Group to reliably access its commands
-    click_group = typer.main.get_command(tool_app)
-    
+    # Convert the Typer app to a Click Command/Group to reliably access its commands
+    click_cmd = typer.main.get_command(tool_app)
+
+    # Determine if this is a multi-command group or a single command.
+    # * In Typer ≥0.9 root apps with only one subcommand may be returned as
+    #   TyperCommand (click.Command) without the ``commands`` attribute.
+    is_group = hasattr(click_cmd, "commands") and bool(getattr(click_cmd, "commands", {}))
+
     should_continue = True
     while should_continue:
         console.clear()
@@ -94,11 +99,17 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
 
         console.print("\n[bold]Available Commands:[/bold]")
         
-        # click_group.commands is a dict of name -> command object
-        commands = list(click_group.commands.values())
+        # Build the list of available commands depending on whether we have a group.
+        if is_group:
+            commands = list(click_cmd.commands.values())  # type: ignore[attr-defined]
+        else:
+            # Treat the whole Typer app as a single command.
+            commands = [click_cmd]
+
         for i, command in enumerate(commands, 1):
-            help_text = command.help or "No description."
-            console.print(f"  [green]{i:2d}[/green]. [bold]{command.name}[/bold] - {help_text}")
+            help_text = getattr(command, "help", None) or tool_app.info.help or "No description."
+            cmd_name = getattr(command, "name", tool_name)
+            console.print(f"  [green]{i:2d}[/green]. [bold]{cmd_name}[/bold] - {help_text}")
 
         console.print("\n  [bold]0[/bold]. Back to Main Menu")
 
@@ -113,17 +124,21 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
                 
                 # --- EXECUTION LOGIC ---
                 console.clear()
-                console.print(f"\n> Launching command: [bold cyan]{tool_name} {selected_command.name}[/bold cyan]")
+                launch_cmd_name = getattr(selected_command, "name", tool_name)
+                console.print(f"\n> Launching command: [bold cyan]{tool_name} {launch_cmd_name}[/bold cyan]")
                 console.print("-" * 40)
                 try:
-                    # Invoke the command within the current process.
-                    tool_app([selected_command.name])
+                    # Invoke the selected command. For single-command apps invoke without subcommand name.
+                    if is_group:
+                        tool_app([selected_command.name])  # type: ignore[arg-type]
+                    else:
+                        tool_app([])  # Runs the root Typer command directly
                 except SystemExit as e:
                     # A non-zero exit code usually indicates an error or user cancellation.
                     if e.code is not None and e.code != 0:
                         console.print(f"[yellow]! Command exited with code {e.code}.[/yellow]")
                 except Exception as e:
-                    console.print(f"[bold red]! An unexpected error occurred while running command '{selected_command.name}':[/bold red]")
+                    console.print(f"[bold red]! An unexpected error occurred while running command '{launch_cmd_name}':[/bold red]")
                     console.print(e)
 
                 console.print("-" * 40)

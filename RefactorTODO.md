@@ -12,14 +12,14 @@
 -   [x] Создать `littletools_core/pyproject.toml`. Указать минимальные метаданные (имя, версия, автор). Зависимостей у этого пакета быть не должно.
 -   [x] **(Ключевой шаг)** Пройти по всем скриптам проекта (`menu.py`, все утилиты) и заменить локальные импорты на импорты из нового пакета (например, `from little_tools_utils import ...` на `from littletools_core.utils import ...`).
 
-### 2. [ ] Выделение `Infinite Differ` в отдельный репозиторий
+### 2. [x] Выделение `Infinite Differ` в отдельный репозиторий
 
--   [ ] Создать новый Git-репозиторий (например, `InfiniteDiffer`).
--   [ ] Перенести содержимое `TxtTools/MultipleTextComparator` в новый репозиторий.
--   [ ] В новом репозитории создать `pyproject.toml`, указав `PyQt6` как основную зависимость.
--   [ ] Добавить `README.md` с инструкцией по установке и запуску.
--   [ ] Удалить `TxtTools/MultipleTextComparator` из репозитория `LittleTools`.
--   [ ] Удалить запись о `"infinite_differ"` из словаря `TOOLS` в `menu.py`.
+-   [x] Создать новый Git-репозиторий (например, `InfiniteDiffer`).
+-   [x] Перенести содержимое `TxtTools/MultipleTextComparator` в новый репозиторий.
+-   [x] В новом репозитории создать `pyproject.toml`, указав `PyQt6` как основную зависимость.
+-   [x] Добавить `README.md` с инструкцией по установке и запуску.
+-   [x] Удалить `TxtTools/MultipleTextComparator` из репозитория `LittleTools`.
+-   [x] Удалить запись о `"infinite_differ"` из словаря `TOOLS` в `menu.py`.
 
 ### 3. [ ] Группировка оставшихся утилит в пакеты
 

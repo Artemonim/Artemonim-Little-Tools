@@ -1,0 +1,87 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Syntx.ai Downloader Tool
+
+A Typer-based CLI tool to download content from Syntx.ai share links.
+This script is designed to be a plugin for the 'littletools-cli'.
+"""
+
+import re
+from pathlib import Path
+
+import requests
+import typer
+from bs4 import BeautifulSoup
+from rich.console import Console
+from typing import Optional
+from typing_extensions import Annotated
+
+from littletools_core.utils import ensure_dir_exists, setup_signal_handler
+
+app = typer.Typer(
+    name="syntx-downloader",
+    help="Download content from Syntx.ai share links.",
+    no_args_is_help=True,
+)
+console = Console()
+
+OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
+
+
+def download_syntx_content(url: str, output_path: Path):
+    """Downloads content from the given Syntx.ai URL."""
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        title_element = soup.find('h1', class_='text-lg')
+        title = title_element.text.strip() if title_element else "Untitled"
+        
+        content_div = soup.find('div', class_='overflow-y-auto')
+        if not content_div:
+            console.print("[red]! Could not find content container on the page.[/red]")
+            return
+
+        filename = "".join(c for c in title if c.isalnum() or c in (' ', '_')).rstrip()
+        output_file = output_path / f"{filename}.txt"
+
+        with output_file.open('w', encoding='utf-8') as f:
+            f.write(f"# {title}\n\n")
+            f.write(content_div.get_text(separator='\n', strip=True))
+
+        console.print(f"[green]✓ Content saved successfully to '{output_file}'[/green]")
+
+    except requests.RequestException as e:
+        console.print(f"[red]! Network or HTTP error: {e}[/red]")
+    except Exception as e:
+        console.print(f"[red]! An unexpected error occurred: {e}[/red]")
+
+
+@app.command()
+def run(
+    url: Annotated[Optional[str], typer.Argument(help="The Syntx.ai share link to download. If not provided, will prompt for it.")] = None,
+    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Directory to save the downloaded content.")] = OUTPUT_DIR,
+):
+    """
+    Downloads and saves content from a Syntx.ai share link.
+    """
+    ensure_dir_exists(output_dir)
+
+    console.print("[*] Syntx.ai Content Downloader")
+    
+    if not url:
+        url = typer.prompt("Please enter the Syntx.ai share link")
+
+    if not re.match(r'https://syntx\.ai/s/\S+', url):
+        console.print("[red]! Invalid Syntx.ai share link format.[/red]")
+        raise typer.Exit(code=1)
+
+    download_syntx_content(url, output_dir)
+
+
+if __name__ == "__main__":
+    setup_signal_handler()
+    app() 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "littletools-txt"
 version = "0.1.0"
-description = "Text processing tools for the LittleTools suite."
+description = "Text processing tools for LittleTools project."
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
@@ -14,14 +14,24 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "pypandoc",
-    "requests",
-    "beautifulsoup4",
-    "littletools_core @ file:../littletools_core",
+    "littletools-core",
+    "requests>=2.28.0",
+    "beautifulsoup4>=4.11.0",
+    "pypandoc>=1.13",
+    "typer[all]>=0.9.0"
 ]
 
 [project.scripts]
 telegram-distiller = "littletools_txt.Telegram_Chats_Distiller:main"
 syntx-downloader = "littletools_txt.SyntxAiDownloader:main"
 wmd-converter = "littletools_txt.WMDconverter:main"
-cyrillic-remover = "littletools_txt.CyrillicRemover:main" 
+cyrillic-remover = "littletools_txt.CyrillicRemover:app"
+
+[project.entry-points."littletools.commands"]
+cyrillic-remover = "littletools_txt.CyrillicRemover:app"
+telegram-distiller = "littletools_txt.Telegram_Chats_Distiller:app"
+syntx-downloader = "littletools_txt.SyntxAiDownloader:app"
+wmd-converter = "littletools_txt.WMDconverter:app"
+
+[tool.setuptools.packages.find]
+where = ["."] 

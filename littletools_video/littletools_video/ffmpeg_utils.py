@@ -84,6 +84,25 @@ class ProcessingStats:
         """Remove a process from the active processes list."""
         if proc in self.active_processes:
             self.active_processes.remove(proc)
+
+    def print_summary(self, elapsed_time: float):
+        """Print final statistics in a consistent format."""
+        processed = self.stats.get('success', 0) + self.stats.get('processed', 0)
+        failed = self.stats.get('errors', 0)
+        skipped = self.stats.get('skipped', 0)
+        total = self.stats.get('total', processed + failed + skipped)
+
+        console.print("\n--- [bold]Operation Summary[/bold] ---")
+        if total > 0:
+            console.print(f"  - Total files considered: {total}")
+        console.print(f"  - [green]Successful[/green]: {processed}")
+        if skipped > 0:
+            console.print(f"  - [yellow]Skipped[/yellow]:    {skipped}")
+        if failed > 0:
+            console.print(f"  - [red]Failed[/red]:       {failed}")
+        
+        if elapsed_time > 0:
+            console.print(f"  - Elapsed time: {format_duration(elapsed_time)}")
     
     def print_status_line(self):
         """

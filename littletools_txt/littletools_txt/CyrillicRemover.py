@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Cyrillic Remover Tool
+
+A Typer-based CLI tool to remove Cyrillic characters from text files based on different modes.
+This script is designed to be a plugin for the 'littletools-cli'.
+"""
+
+import os
+from pathlib import Path
+from typing import List
+
+import typer
+from rich.console import Console
+from typing_extensions import Annotated
+
+from littletools_core.utils import ensure_dir_exists, setup_signal_handler
+
+app = typer.Typer(
+    name="cyrillic-remover",
+    help="Remove Cyrillic characters from text files.",
+    no_args_is_help=True,
+)
+console = Console()
+
+INPUT_DIR = Path.cwd() / "0-INPUT-0"
+OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
+
+# --- Configuration ---
+DEFAULT_OUTPUT_FOLDER = "0-OUTPUT-0/CyrillicRemoved"
+SUPPORTED_EXTENSIONS = [".txt"]
+
+# --- Core Processing Functions (from original script) ---
+
+def is_cyrillic(char: str) -> bool:
+    """Check if a character is Cyrillic."""
+    return 'а' <= char.lower() <= 'я'
+
+def remove_all_cyrillic(content: List[str]) -> str:
+    """Mode 1: Remove all Cyrillic characters from the content."""
+    return "".join(char for char in "".join(content) if not is_cyrillic(char))
+
+def remove_from_first_cyrillic(content: List[str]) -> str:
+    """Mode 2: For each line, remove text from the first Cyrillic character onwards."""
+    cleaned_lines = []
+    for line in content:
+        for i, char in enumerate(line):
+            if is_cyrillic(char):
+                cleaned_lines.append(line[:i])
+                break
+        else:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+def remove_to_last_cyrillic(content: List[str]) -> str:
+    """Mode 3: For each line, remove text up to the last Cyrillic character."""
+    cleaned_lines = []
+    for line in content:
+        last_cyrillic_pos = -1
+        for i, char in enumerate(line):
+            if is_cyrillic(char):
+                last_cyrillic_pos = i
+        if last_cyrillic_pos != -1:
+            cleaned_lines.append(line[last_cyrillic_pos + 1:])
+        else:
+            cleaned_lines.append(line)
+    return "\n".join(cleaned_lines)
+
+def process_file(
+    file_path: Path,
+    output_dir: Path,
+    mode: str,
+    overwrite: bool
+) -> str:
+    """
+    Processes a single text file and returns a status ('processed', 'skipped', 'error').
+    """
+    output_path = output_dir / file_path.name
+    if not overwrite and output_path.exists():
+        console.print(f"  -> Skipped (exists): {output_path.name}")
+        return "skipped"
+
+    try:
+        with file_path.open('r', encoding='utf-8') as f:
+            content = f.readlines()
+
+        if not any(is_cyrillic(char) for line in content for char in line):
+            console.print(f"  -> Skipped (no Cyrillic characters found): {file_path.name}")
+            return "skipped"
+
+        if mode == "1":
+            cleaned_content = remove_all_cyrillic(content)
+        elif mode == "2":
+            cleaned_content = remove_from_first_cyrillic(content)
+        elif mode == "3":
+            cleaned_content = remove_to_last_cyrillic(content)
+        else: # Should not happen with Typer's choices
+            return "error"
+
+        with output_path.open('w', encoding='utf-8') as f:
+            f.write(cleaned_content)
+        
+        console.print(f"  -> [green]Processed:[/green] {output_path.name}")
+        return "processed"
+    except Exception as e:
+        console.print(f"  -> [red]Error processing {file_path.name}: {e}[/red]")
+        return "error"
+
+
+@app.command()
+def run(
+    input_dir: Annotated[Path, typer.Option("--input", "-i", help="Input directory containing text files.")] = INPUT_DIR,
+    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for processed files.")] = OUTPUT_DIR,
+    mode: Annotated[str, typer.Option(help="Removal mode: '1' for all Cyrillic, '2' for part of line after first, '3' for part of line before last.")] = "1",
+    overwrite: Annotated[bool, typer.Option(help="Overwrite existing files in the output directory.")] = False,
+):
+    """
+    Remove Cyrillic characters from all .txt files in a directory.
+    """
+    ensure_dir_exists(input_dir)
+    ensure_dir_exists(output_dir)
+
+    console.print(f"[*] Starting Cyrillic remover in mode '{mode}'.")
+    console.print(f"[*] Input: '{input_dir}', Output: '{output_dir}'")
+
+    files = sorted([p for p in input_dir.glob("*.txt")])
+    if not files:
+        console.print("[yellow]! No .txt files found to process.[/yellow]")
+        raise typer.Exit()
+
+    total_files = len(files)
+    console.print(f"[*] Found {total_files} file(s) to process.")
+    
+    stats = {"processed": 0, "skipped": 0, "error": 0}
+
+    for i, file_path in enumerate(files):
+        console.print(f"[{i+1}/{total_files}] Processing {file_path.name}...")
+        status = process_file(file_path, output_dir, mode, overwrite)
+        stats[status] += 1
+    
+    console.print("\n--- Summary ---")
+    console.print(f"Total files: {total_files}")
+    console.print(f"[green]Processed: {stats['processed']}[/green]")
+    console.print(f"[yellow]Skipped: {stats['skipped']}[/yellow]")
+    console.print(f"[red]Errors: {stats['error']}[/red]")
+    console.print("\n[green]✓ Processing complete.[/green]")
+
+
+if __name__ == "__main__":
+    setup_signal_handler()
+    app()

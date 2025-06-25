@@ -1,8 +1,103 @@
-# Artemonim's Little Tools
+# LittleTools
 
-[Описания и инструкция на русском...](Docs/ПРОЧТИМЕНЯ.MD)
+A collection of command-line utilities for various file processing tasks, built as a modular, extensible ecosystem.
 
-A collection of small utility tools created for [personal commercial and non-commercial needs](/LICENSE). These tools aim to solve specific problems efficiently and can be used across different environments.
+## About The Project
+
+LittleTools has been refactored from a collection of individual scripts into a modern, package-based Python project. The new architecture uses a central command-line interface (CLI) tool, `lt`, which dynamically discovers and loads all installed "tool" plugins.
+
+This design allows for better separation of concerns, easier maintenance, and the ability to install only the tools you need.
+
+### Key Features
+
+-   **Modular Architecture**: Each tool (`video-converter`, `whisper-transcriber`, etc.) is a separate, installable Python package.
+-   **Extensible CLI**: The main `lt` command automatically finds and integrates any installed LittleTools plugin.
+-   **Dependency Management**: Each tool manages its own dependencies via its `pyproject.toml` file.
+-   **Simplified Setup**: A single setup script handles the creation of a virtual environment and the installation of all tools.
+
+## Getting Started
+
+### Prerequisites
+
+-   Python 3.8 or higher.
+-   (Windows) PowerShell for running the setup script.
+
+### Installation
+
+1.  **Clone the repository:**
+
+    ```sh
+    git clone https://github.com/your-username/LittleTools.git
+    cd LittleTools
+    ```
+
+2.  **Run the setup script:**
+    This script will create a local Python virtual environment (`.venv`) and install all the LittleTools packages in editable mode.
+
+    For Windows (in PowerShell):
+
+    ```powershell
+    .\start.ps1
+    ```
+
+    If you encounter any execution policy issues in PowerShell, you may need to run:
+
+    ```powershell
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+    # Then run the script again
+    .\start.ps1
+    ```
+
+3.  **Activate the virtual environment:**
+    After the setup script completes, you must activate the virtual environment to use the tools.
+
+    -   **Windows (PowerShell):**
+        ```powershell
+        .\.venv\Scripts\Activate.ps1
+        ```
+    -   **Windows (Command Prompt):**
+        ```cmd
+        .\.venv\Scripts\activate.bat
+        ```
+    -   **Linux / macOS:**
+        ```sh
+        source ./.venv/bin/activate
+        ```
+
+## Usage
+
+Once the virtual environment is activated, all tools are available through the main `lt` command.
+
+**1. List all available tool commands:**
+
+```sh
+lt --help
+```
+
+**2. Get help for a specific tool:**
+Each tool is a subcommand. You can get detailed help for its specific options.
+
+```sh
+lt video-converter --help
+lt whisper-transcriber --help
+lt cyrillic-remover --help
+```
+
+**3. Run a tool:**
+Provide the tool name as a subcommand, followed by its specific arguments.
+
+_Example: Convert all videos in the input directory_
+
+```sh
+# Assumes videos are in 0-INPUT-0 and output goes to 0-OUTPUT-0
+lt video-converter convert --quality 30 --fps 60
+```
+
+_Example: Transcribe all audio in Russian_
+
+```sh
+lt whisper-transcriber run --model large-v3 --language ru
+```
 
 ## 🚀 Quick Setup
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "littletools-speech"
 version = "0.1.0"
-description = "Speech-to-text tools for the LittleTools suite."
+description = "Speech processing tools for LittleTools project."
 readme = "README.md"
 requires-python = ">=3.8"
 classifiers = [
@@ -14,13 +14,22 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "torch",
-    "openai-whisper",
-    "ffmpeg-python",
+    "littletools-core",
+    "setuptools>=65.0.0",
+    "wheel>=0.38.0",
+    "torch>=2.0.0",
+    "torchaudio>=2.0.0",
+    "openai-whisper @ git+https://github.com/openai/whisper.git",
+    "ffmpeg-python>=0.2.0",
+    "typer[all]>=0.9.0",
     "tqdm",
-    "soundfile",
-    "littletools_core @ file:../littletools_core",
 ]
 
 [project.scripts]
-whisper-transcriber = "littletools_speech.whisper_transcriber:main" 
+whisper-transcriber = "littletools_speech.whisper_transcriber:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[project.entry-points."littletools.commands"]
+whisper-transcriber = "littletools_speech.whisper_transcriber:app" 

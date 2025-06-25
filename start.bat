@@ -24,8 +24,4 @@ if %errorlevel% neq 0 (
     echo Setup script encountered an error.
     pause
     exit /b %errorlevel%
-)
-
-echo.
-echo Setup completed successfully.
-pause 
+) 

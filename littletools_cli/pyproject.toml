@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "littletools-cli"
+version = "0.1.0"
+description = "Command-line interface for LittleTools."
+dependencies = [
+    "littletools-core",
+    "typer[all]>=0.9.0",
+]
+requires-python = ">=3.8"
+
+[project.scripts]
+lt = "littletools_cli.menu:main"
+
+[tool.setuptools.packages.find]
+where = ["."] 

@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = [
+    "littletools_cli",
+    "littletools_core",
+    "littletools_speech",
+    "littletools_txt",
+    "littletools_video",
+] 

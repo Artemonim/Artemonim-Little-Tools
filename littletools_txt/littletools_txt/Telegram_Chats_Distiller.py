@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Telegram Chats Distiller Tool
+
+A Typer-based CLI tool to process and distill Telegram chat export JSON files.
+This script is designed to be a plugin for the 'littletools-cli'.
+"""
+
+import json
+from pathlib import Path
+
+import typer
+from rich.console import Console
+from typing import Optional
+from typing_extensions import Annotated
+
+from littletools_core.utils import ensure_dir_exists, setup_signal_handler
+
+app = typer.Typer(
+    name="telegram-distiller",
+    help="Process and distill Telegram chat export JSON files.",
+    no_args_is_help=True,
+)
+console = Console()
+
+INPUT_DIR = Path.cwd() / "0-INPUT-0"
+OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
+
+
+def process_chat_file(input_file: Path, output_file: Path):
+    """Reads a Telegram JSON export and writes a distilled version."""
+    try:
+        with input_file.open('r', encoding='utf-8') as f:
+            data = json.load(f)
+
+        distilled_messages = []
+        for message in data.get('messages', []):
+            if message.get('type') == 'message' and isinstance(message.get('text'), str):
+                distilled_messages.append({
+                    'id': message.get('id'),
+                    'from': message.get('from'),
+                    'from_id': message.get('from_id'),
+                    'date': message.get('date'),
+                    'text': message.get('text')
+                })
+
+        with output_file.open('w', encoding='utf-8') as f:
+            json.dump(distilled_messages, f, ensure_ascii=False, indent=2)
+
+        return True
+    except Exception as e:
+        console.print(f"[red]Error processing {input_file.name}: {e}[/red]")
+        return False
+
+
+@app.command()
+def run(
+    input_file: Annotated[Path, typer.Option("--input", "-i", help="Input Telegram JSON file.")],
+    output_file: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output file for the distilled JSON. [default: <input_stem>_distilled.json]")] = None,
+):
+    """
+    Distills a Telegram chat export JSON file, keeping only essential message data.
+    """
+    if not input_file.exists():
+        console.print(f"[red]! Input file not found: {input_file}[/red]")
+        raise typer.Exit(code=1)
+
+    if output_file is None:
+        ensure_dir_exists(OUTPUT_DIR)
+        output_file = OUTPUT_DIR / f"{input_file.stem}_distilled.json"
+    else:
+        ensure_dir_exists(output_file.parent)
+
+    console.print(f"[*] Distilling '{input_file.name}'...")
+    if process_chat_file(input_file, output_file):
+        console.print(f"[green]✓ Successfully distilled chat to '{output_file}'[/green]")
+    else:
+        console.print(f"[red]! Failed to distill chat file.[/red]")
+        raise typer.Exit(code=1)
+
+
+if __name__ == "__main__":
+    setup_signal_handler()
+    app()

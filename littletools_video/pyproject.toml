@@ -14,12 +14,25 @@ classifiers = [
     "Operating System :: OS Independent",
 ]
 dependencies = [
-    "Pillow",
-    "littletools_core @ file:../littletools_core",
+    "Pillow>=9.0.0",  # * Image processing library
+    # * Depends on the core utilities distributed as a separate package within the workspace.
+    # * Since 'littletools-core' is installed in editable mode by the setup script, a normal
+    # * package reference is sufficient and avoids path-resolution issues on Windows.
+    "littletools-core",
+    "typer[all]>=0.9.0",
 ]
 
 [project.scripts]
 ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer_v2:main"
 topaz-merger = "littletools_video.Topaz_Video_Merger:main"
 video-converter = "littletools_video.video_converter:main"
-image-audio-to-video = "littletools_video.Image_Audio_To_Video:main" 
+image-audio-to-video = "littletools_video.Image_Audio_To_Video:main"
+
+[project.entry-points."littletools.commands"]
+video-converter = "littletools_video.video_converter:app"
+ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:app"
+topaz-merger = "littletools_video.Topaz_Video_Merger:app"
+image-audio-to-video = "littletools_video.Image_Audio_To_Video:app"
+
+[tool.setuptools.packages.find]
+where = ["."] 

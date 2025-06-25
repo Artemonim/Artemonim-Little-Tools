@@ -9,4 +9,52 @@ packages = [
     "littletools_speech",
     "littletools_txt",
     "littletools_video",
-] 
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pyright]
+# * Help Pylance/Pyright find packages in this monorepo
+# * This is necessary because of the editable installs of local packages.
+extraPaths = [
+    "./littletools_cli",
+    "./littletools_core",
+    "./littletools_speech",
+    "./littletools_txt",
+    "./littletools_video",
+]
+
+[tool.black]
+# * Line length to match project standards
+line-length = 88
+# * Target Python versions
+target-version = ["py311"]
+# * Include specific file patterns
+include = '\.pyi?$'
+# * Exclude specific directories and files
+extend-exclude = '''
+/(
+    # * Legacy files
+    legacy_.*\.py
+    | refactoring_.*\.py
+    # * Temporary and build directories
+    | temporary
+    | 0-INPUT-0
+    | 0-OUTPUT-0
+    | ben2_output
+    | tools
+    | \.eggs
+    | \.git
+    | \.mypy_cache
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+)/
+'''
+# * Skip string normalization to preserve existing style
+skip-string-normalization = false
+# * Preview features
+preview = false 

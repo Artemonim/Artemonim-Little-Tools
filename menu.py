@@ -72,19 +72,6 @@ TOOLS = {
         "args_template": [],
         "needs_dependencies": True
     },
-    "infinite_differ": {
-        "name": "Infinite Differ (Multiple Text Comparator)",
-        "description": "Compare multiple text files simultaneously with GUI",
-        "path": "TxtTools/MultipleTextComparator",
-        "script": "Infinite_Differ.py",
-        "requirements": ["PyQt6>=6.4.0"],
-        "system_deps": [],
-        "supports_batch": False,
-        "input_extensions": [".txt", ".md", ".py", ".js", ".html", ".css"],
-        "output_extension": None,
-        "args_template": [],
-        "needs_dependencies": True
-    },
     "wmd_converter": {
         "name": "Word-Markdown Converter",
         "description": "Convert between DOCX and Markdown formats",

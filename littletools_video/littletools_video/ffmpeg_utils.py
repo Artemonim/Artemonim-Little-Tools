@@ -26,6 +26,9 @@ import subprocess
 import signal
 from typing import Optional
 
+from rich.console import Console
+console = Console()
+
 # * Import common utilities
 from littletools_core.utils import (
     print_separator, print_file_info, ensure_dir_exists,

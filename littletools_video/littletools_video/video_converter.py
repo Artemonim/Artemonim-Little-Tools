@@ -183,44 +183,61 @@ def convert(
 @app.command()
 def single():
     """
-    Convert a single video file with interactive prompts for all options.
+    Convert a single video file or all supported files in a directory with interactive prompts for all options.
     """
-    console.print("[*] Interactive single file conversion.")
+    console.print("[*] Interactive single file or folder conversion.")
     
     try:
-        # --- Input File ---
+        # --- Input File or Directory ---
         while True:
-            input_str = typer.prompt("Enter the path to the input video file")
-            input_file = Path(input_str.strip().strip('"'))
-            if input_file.exists() and input_file.is_file():
+            input_str = typer.prompt("Enter the path to the input video file or directory")
+            input_path = Path(input_str.strip().strip('"'))
+            if input_path.exists():
                 break
-            console.print(f"[red]! File not found: {input_file}. Please try again.[/red]")
+            console.print(f"[red]! File or directory not found: {input_path}. Please try again.[/red]")
 
-        # --- Output File ---
-        default_output_name = f"{input_file.stem}_converted.mp4"
-        output_str = typer.prompt(
-            "Enter the output file path (or press Enter for default)",
-            default=str(OUTPUT_DIR / default_output_name)
-        )
-        output_file = Path(output_str.strip().strip('"'))
-        ensure_dir_exists(output_file.parent)
+        # --- Determine files to process ---
+        supported_extensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"]
+        if input_path.is_file():
+            files_to_process = [input_path]
+        elif input_path.is_dir():
+            files_to_process = [p for p in input_path.iterdir() if p.suffix.lower() in supported_extensions and p.is_file()]
+            if not files_to_process:
+                console.print("[yellow]! No supported video files found in the directory.[/yellow]")
+                raise typer.Exit()
+        else:
+            console.print(f"[red]! Path is neither a file nor a directory: {input_path}.[/red]")
+            raise typer.Exit()
+
+        # --- Output File or Directory ---
+        if len(files_to_process) == 1:
+            default_output_name = f"{files_to_process[0].stem}_converted.mp4"
+            output_str = typer.prompt(
+                "Enter the output file path (or press Enter for default)",
+                default=str(OUTPUT_DIR / default_output_name)
+            )
+            output_file = Path(output_str.strip().strip('"'))
+            ensure_dir_exists(output_file.parent)
+        else:
+            output_str = typer.prompt(
+                "Enter the output directory for converted files (or press Enter for default)",
+                default=str(OUTPUT_DIR)
+            )
+            output_file = None
+            output_dir = Path(output_str.strip().strip('"'))
+            ensure_dir_exists(output_dir)
 
         # --- Helper for presenting choices ---
         def prompt_for_choice(text: str, choices: dict, default: str) -> str:
             console.print(f"\n[bold]{text}[/bold]")
-            # Create a simple mapping from number to choice value
             choice_map = {str(i+1): value for i, value in enumerate(choices.values())}
-            # Display options
             for i, (name, value) in enumerate(choices.items()):
                 console.print(f"  [green]{i+1}[/green]. {name}")
-
-            # Find the default index
             default_idx_str = "1"
             for i, value in enumerate(choices.values()):
                 if value == default:
                     default_idx_str = str(i + 1)
                     break
-            
             while True:
                 raw_input = typer.prompt("Your choice", default=default_idx_str)
                 if raw_input in choice_map:
@@ -241,47 +258,48 @@ def single():
         fps = prompt_for_choice("Select target FPS", fps_choices, default="original")
         resolution = prompt_for_choice("Select target resolution", resolution_choices, default="original")
         normalize_audio = typer.confirm("\nNormalize audio to -16 LUFS?", default=False)
-        overwrite = typer.confirm(f"Overwrite '{output_file.name}' if it exists?", default=False)
+        overwrite = typer.confirm(f"Overwrite output file(s) if they exist?", default=False)
 
-        if not overwrite and output_file.exists():
-            console.print(f"[yellow]! Output file exists and overwrite is disabled. Aborting.[/yellow]")
-            raise typer.Exit()
-            
-        console.print("\n--- Starting Conversion ---")
-        console.print(f"  Input: {input_file}")
-        console.print(f"  Output: {output_file}")
-        console.print(f"  Options: CQ={quality}, FPS={fps}, Resolution={resolution}, Normalize Audio={normalize_audio}")
-        console.print("-" * 30)
-
-        # --- Run Conversion ---
+        # --- Run Conversion(s) ---
         stats = ProcessingStats()
-        estimator = BatchTimeEstimator() # Used for a single file here
-        
-        async def run_conversion():
-            await _process_single_file_for_conversion(
-                file_path=input_file,
-                output_dir=output_file.parent,
-                quality=quality,
-                fps=fps,
-                resolution=resolution,
-                normalize_audio=normalize_audio,
-                overwrite=True, # Already checked above
-                stats=stats,
-                estimator=estimator,
-                position=1,
-                total=1
-            )
-            # The helper creates a default name, so we rename it to what the user specified.
-            default_output = output_file.parent / f"{input_file.stem}_converted.mp4"
-            if default_output.exists() and default_output != output_file:
-                 shutil.move(str(default_output), str(output_file))
-
+        estimator = BatchTimeEstimator()
+        estimator.start()
+        total_files = len(files_to_process)
         start_time = time.monotonic()
+
+        async def run_conversion():
+            for idx, file_path in enumerate(files_to_process, 1):
+                try:
+                    if output_file and total_files == 1:
+                        out_dir = output_file.parent
+                    else:
+                        out_dir = output_dir if output_file is None else output_file.parent
+                    await _process_single_file_for_conversion(
+                        file_path=file_path,
+                        output_dir=out_dir,
+                        quality=quality,
+                        fps=fps,
+                        resolution=resolution,
+                        normalize_audio=normalize_audio,
+                        overwrite=overwrite,
+                        stats=stats,
+                        estimator=estimator,
+                        position=idx,
+                        total=total_files
+                    )
+                    # If single file and custom output name, rename result
+                    if output_file and total_files == 1:
+                        default_output = output_file.parent / f"{file_path.stem}_converted.mp4"
+                        if default_output.exists() and default_output != output_file:
+                            shutil.move(str(default_output), str(output_file))
+                except Exception as e:
+                    console.print(f"[yellow]! Skipped file due to error: {file_path} ({e})[/yellow]")
+                    stats.increment("skipped")
+
         asyncio.run(run_conversion())
         elapsed_time = time.monotonic() - start_time
-        
         stats.print_summary(elapsed_time)
-        console.print("[green]✓ Interactive conversion complete.[/green]")
+        console.print("[green]✓ Conversion complete.[/green]")
 
     except typer.Abort:
         console.print("\n[yellow]! Operation cancelled by user.[/yellow]")

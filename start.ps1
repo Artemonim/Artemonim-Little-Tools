@@ -156,7 +156,7 @@ function Install-Environment {
         }
         
         # * Install all LittleTools packages
-        & $VenvPaths.Python -m pip install --upgrade -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video
+        & $VenvPaths.Python -m pip install --upgrade -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video -e "$PSScriptRoot\..\AgentDocstringsGenerator"
         if ($LASTEXITCODE -ne 0) { throw "Failed to install one or more packages." }
         Write-Host "  ✓ All packages installed and up-to-date." -ForegroundColor Green
         

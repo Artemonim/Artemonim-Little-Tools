@@ -1,6 +1,9 @@
 import math
+from typing import Optional
+from typing import Tuple
+from typing import Union
+
 import torch
-from typing import Optional, Union, Tuple
 
 
 # @torch.jit.script

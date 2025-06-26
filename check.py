@@ -501,6 +501,19 @@ class CodeQualityChecker:
                     installed_stubs = self._install_missing_type_stubs(mypy_result["stdout"])
                     if installed_stubs:
                         self.print_status("Type stubs installed, will re-run MyPy in analysis phase", "success")
+            # * Docstring generation phase: run Agent Docstrings Generator after auto-fixes
+            if not self.json_output:
+                self.print_separator("AGENT DOCSTRINGS GENERATOR")
+                self.print_status("Running Agent Docstrings Generator...")
+            cmd = [sys.executable, "-m", "agent_docstrings.cli"] + self.target_paths
+            exit_code, stdout, stderr = self.run_command(cmd)
+            if not self.json_output:
+                if exit_code == 0:
+                    self.print_status("Agent Docstrings Generator completed successfully", "success")
+                else:
+                    self.print_status("Agent Docstrings Generator failed", "error")
+                    if stderr:
+                        self.print_status(stderr)
 
         # * Analysis phase: run all tools for checking
         if not self.json_output and not specific_tool:

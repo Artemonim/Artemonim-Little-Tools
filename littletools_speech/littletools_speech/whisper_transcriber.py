@@ -9,15 +9,16 @@ This script is designed to be a plugin for the 'littletools-cli'.
 
 from pathlib import Path
 
+import torch
 import typer
+import whisper
 from rich.console import Console
+from tqdm import tqdm
 from typing_extensions import Annotated
 
-from littletools_core.utils import ensure_dir_exists, setup_signal_handler
 from littletools_core.huggingface_utils import download_hf_model
-import whisper
-import torch
-from tqdm import tqdm
+from littletools_core.utils import ensure_dir_exists
+from littletools_core.utils import setup_signal_handler
 
 app = typer.Typer(
     name="whisper-transcriber",

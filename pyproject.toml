@@ -14,6 +14,10 @@ dependencies = [
     "mypy>=1.16.0", 
     "black>=25.0.0",
     "isort>=6.0.0",
+    # * Additional development dependencies
+    "types-requests>=2.31.0",
+    "types-setuptools>=69.0.0",
+    "types-Send2Trash>=1.0.0",
     # * NPX is handled externally for pyright
 ]
 

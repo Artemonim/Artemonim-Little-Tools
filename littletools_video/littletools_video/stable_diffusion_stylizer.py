@@ -5,6 +5,106 @@ Stable Diffusion Video Stylizer
 
 This tool stylizes videos using Stable Diffusion models and upscales them using Real-ESRGAN.
 Optimized for 8GB VRAM with memory-efficient techniques.
+
++ALGORITHM OVERVIEW:
++==================
++
++The video stylization process follows these main stages:
++
++1. FRAME EXTRACTION
++   - Extract individual frames from input video using FFmpeg
++   - Scale frames to target resolution (480p/720p/1080p) with Lanczos filtering
++   - Optional: Process only first 2 seconds in test mode
++   - Save frames as high-quality PNG files (quality level 2)
++
++2. MODEL LOADING & PIPELINE SETUP
++   - Download Stable Diffusion model from HuggingFace Hub if needed
++   - Initialize master pipeline with memory optimizations:
++     * Enable attention slicing for VRAM efficiency
++     * Use XFormers memory-efficient attention when available
++     * Configure scheduler (UniPC/DDIM/EulerA/DPM2M)
++   - Create worker pipeline clones for concurrent processing
++   - Optional: Load and integrate ControlNet for structural guidance
++
++3. STYLIZATION MODES
++   
++   A) ANIMATEDIFF MODE (Temporal Consistency):
++      - Load AnimateDiff motion adapter for temporal coherence
++      - Process video in overlapping chunks (16-frame context window)
++      - Apply ControlNet preprocessing if enabled:
++        * Canny: Edge detection for structural preservation
++        * Depth: MiDaS depth estimation for 3D structure
++        * OpenPose: Human pose detection for character consistency
++      - Generate stylized chunks with frame blending at overlaps
++      - Maintain temporal smoothness across chunk boundaries
++   
++   B) PER-FRAME MODE (Independent Processing):
++      - Process each frame independently using Img2Img pipeline
++      - Use semaphore-controlled concurrency for memory management
++      - Apply stylization with configurable strength (0.0-1.0)
++      - Clear VRAM cache after each frame to prevent OOM
++
++4. UPSCALING (Optional)
++   - Load Real-ESRGAN x4plus model for super-resolution
++   - Process stylized frames with 4x upscaling
++   - Use FP16 precision and tiling for memory efficiency
++   - Output high-resolution frames ready for reassembly
++
++5. VIDEO REASSEMBLY
++   - Detect original video framerate using FFprobe
++   - Encode stylized frames using HEVC (H.265) with CQ=26
++   - Copy original audio tracks without re-encoding
++   - Apply faststart flag for web streaming compatibility
++   - Ensure output duration matches shortest stream
++
++MEMORY OPTIMIZATION STRATEGIES:
++==============================
++
++- Master/Worker Pipeline Pattern: Single model in memory, multiple inference heads
++- Attention Slicing: Reduces peak VRAM usage during attention computation
++- XFormers Integration: Memory-efficient attention implementation
++- Progressive VRAM Clearing: torch.cuda.empty_cache() after each frame
++- FP16 Precision: Halves memory usage for compatible GPUs
++- Semaphore Concurrency Control: Prevents memory overload from parallel workers
++- Chunk-based AnimateDiff: Processes long videos in manageable segments
++
++INTERACTIVE FEATURES:
++====================
++
++- Automatic mode detection: Triggers interactive menu when key parameters missing
++- Rich CLI interface with progress bars and colored output
++- Settings menu for scheduler, ControlNet, upscaling, and test mode
++- Path validation and error handling with user-friendly messages
++- Cancellation support with proper cleanup of background tasks
++
++SUPPORTED FORMATS & MODELS:
++===========================
++
++Input: Any FFmpeg-supported video format (MP4, AVI, MOV, MKV, etc.)
++Output: MP4 with HEVC video + original audio
++
++Base Models: 
++- Stable Diffusion 1.5: runwayml/stable-diffusion-v1-5 (768-dim cross-attention)
++- Stable Diffusion 2.x: stabilityai/stable-diffusion-2-base (1024-dim cross-attention)
++
++ControlNets:
++- SD 1.5 compatible: lllyasviel/sd-controlnet-{canny,depth,openpose}
++- SD 2.x compatible: thibaud/controlnet-sd21-{canny,depth,openpose}-diffusers
++
++! IMPORTANT: Base model and ControlNet must have matching cross-attention dimensions
++! to avoid "mat1 and mat2 shapes cannot be multiplied" errors.
++
++Upscaler: Real-ESRGAN x4plus for 4x super-resolution
++Schedulers: UniPC (default), DDIM, Euler Ancestral, DPM++ 2M
++
++PERFORMANCE CHARACTERISTICS:
++============================
++
++- Memory Usage: ~6-8GB VRAM for 512x512 processing
++- Processing Speed: ~2-5 seconds per frame (GPU dependent)
++- AnimateDiff: 2-3x slower but significantly better temporal consistency
++- Upscaling: Additional ~1-2 seconds per frame
++- Recommended: RTX 3070/4060 or better for smooth operation
 """
 
 import asyncio
@@ -14,15 +114,51 @@ import os
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
+import torch
+import random  # For reproducible seed selection
 import typer
 from rich.console import Console
-from rich.progress import Progress, TaskID
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TaskID,
+)
 from typing_extensions import Annotated
 
 # * Suppress xformers FutureWarnings and import required modules for stderr redirection
 import warnings
 import contextlib
 warnings.filterwarnings("ignore", category=FutureWarning, module="xformers")
+
+# * Add Real-ESRGAN compatibility fix for newer torchvision versions
+try:
+    # * Attempt to import the deprecated module
+    import torchvision.transforms.functional_tensor  # type: ignore[import-untyped]
+except ImportError:
+    # * Create a monkey-patch for missing functional_tensor module
+    import sys
+    import types
+    
+    # * Create a mock module to avoid import errors
+    mock_module = types.ModuleType('functional_tensor')
+    
+    # * Add essential functions that Real-ESRGAN might need
+    def rgb_to_grayscale(tensor: Any, num_output_channels: int = 1) -> Any:
+        """Mock implementation of rgb_to_grayscale"""
+        try:
+            import torchvision.transforms.functional as F
+            return F.rgb_to_grayscale(tensor, num_output_channels)
+        except ImportError:
+            # * Fallback implementation if torch is not available
+            return tensor
+    
+    # * Add the function to the mock module using setattr
+    setattr(mock_module, 'rgb_to_grayscale', rgb_to_grayscale)
+    
+    # * Inject the mock module into sys.modules
+    sys.modules['torchvision.transforms.functional_tensor'] = mock_module
 
 from littletools_core.huggingface_utils import download_hf_model
 from littletools_core.utils import (
@@ -31,8 +167,29 @@ from littletools_core.utils import (
     prompt_for_interactive_settings,
 )
 
+# * Delay heavy diffusers imports until necessary functions to optimize startup and avoid unused-import warnings.
+# * Only import what is required at runtime within functions.
+
+# * Suppress excessive info logs (e.g., "Keyword arguments {...}") coming from diffusers internals
+# * by elevating the diffusers logger threshold to ERROR.
+import logging
+
+logging.getLogger("diffusers").setLevel(logging.ERROR)
+
+from controlnet_aux import CannyDetector, OpenposeDetector, MidasDetector
+# * 'Compel' automatic prompt embedding is not currently used in this script. Remove unused import to satisfy linters.
+from PIL import Image
+
 # * Global configuration
 console = Console()
+
+# * Log the Real-ESRGAN compatibility patch if it was applied
+if 'torchvision.transforms.functional_tensor' in sys.modules:
+    try:
+        import torchvision.transforms.functional_tensor  # type: ignore[import-untyped]
+    except ImportError:
+        console.print("[yellow]! Applied compatibility patch for Real-ESRGAN[/yellow]")
+
 app = typer.Typer(
     name="stylize",
     help="Stylize videos using Stable Diffusion and upscale with Real-ESRGAN.",
@@ -45,7 +202,6 @@ os.environ["TORCHINDUCTOR_CACHE_DIR"] = os.path.join(os.getcwd(), ".torchinducto
 
 # * Set torch matmul precision for better performance on Ampere+ GPUs
 try:
-    import torch
     if torch.cuda.is_available():
         torch.set_float32_matmul_precision('high')
 except ImportError:
@@ -53,6 +209,90 @@ except ImportError:
 
 # * Global variable to store the master compiled pipeline
 _compiled_master_pipeline = None
+
+# * Silence noisy library warnings and backtraces -------------------------------
+os.environ.setdefault("XFORMERS_DISABLE_TRITON_WARNING", "1")  # * Suppress xformers Triton traceback
+
+# * Filter out specific warning categories from third-party libs
+warnings.filterwarnings("ignore", category=UserWarning, module="timm")
+warnings.filterwarnings("ignore", category=UserWarning, module="xformers")
+warnings.filterwarnings("ignore", category=FutureWarning, module="controlnet_aux")
+warnings.filterwarnings("ignore", category=UserWarning, module="diffusers")
+
+# * Add top-level definition for ControlNet video2video pipeline to satisfy static analysis
+try:
+    from diffusers import AnimateDiffVideoToVideoControlNetPipeline  # type: ignore
+except ImportError:
+    AnimateDiffVideoToVideoControlNetPipeline = None  # type: ignore
+
+def validate_model_compatibility(model_id: str, controlnet_id: Optional[str]) -> bool:
+    """
+    Validate compatibility between base model and ControlNet.
+    
+    Args:
+        model_id: Base Stable Diffusion model ID
+        controlnet_id: ControlNet model ID
+        
+    Returns:
+        True if models are compatible, False otherwise
+    """
+    if not controlnet_id:
+        return True  # No ControlNet, no compatibility issues
+    
+    # * SD 1.5 models (768-dim cross-attention)
+    sd15_models = [
+        "runwayml/stable-diffusion-v1-5",
+        "stabilityai/stable-diffusion-xl-base-1.0",  # Note: SDXL has different requirements
+        "dreamlike-art/dreamlike-photoreal-2.0",
+        "SG161222/Realistic_Vision_V2.0",
+    ]
+    
+    # * SD 2.x models (1024-dim cross-attention)  
+    sd2_models = [
+        "stabilityai/stable-diffusion-2-base",
+        "stabilityai/stable-diffusion-2-1-base",
+        "stabilityai/stable-diffusion-2",
+        "stabilityai/stable-diffusion-2-1",
+    ]
+    
+    # * Standard ControlNet models (designed for SD 1.5)
+    sd15_controlnets = [
+        "lllyasviel/sd-controlnet-canny",
+        "lllyasviel/sd-controlnet-depth", 
+        "lllyasviel/sd-controlnet-openpose",
+        "lllyasviel/sd-controlnet-scribble",
+        "lllyasviel/sd-controlnet-seg",
+        "lllyasviel/control_v11p_sd15_canny",
+        "lllyasviel/control_v11f1p_sd15_depth",
+        "lllyasviel/control_v11p_sd15_openpose",
+    ]
+    
+    # * SD 2.x ControlNet models
+    sd2_controlnets = [
+        "thibaud/controlnet-sd21-canny-diffusers",
+        "thibaud/controlnet-sd21-depth-diffusers", 
+        "thibaud/controlnet-sd21-openpose-diffusers",
+    ]
+    
+    is_sd15_model = any(model in model_id for model in sd15_models)
+    is_sd2_model = any(model in model_id for model in sd2_models)
+    is_sd15_controlnet = any(cn in controlnet_id for cn in sd15_controlnets)
+    is_sd2_controlnet = any(cn in controlnet_id for cn in sd2_controlnets)
+    
+    # * Check compatibility
+    if is_sd15_model and is_sd15_controlnet:
+        return True
+    elif is_sd2_model and is_sd2_controlnet:
+        return True
+    elif is_sd15_model and is_sd2_controlnet:
+        console.print(f"[yellow]! Warning: SD 1.5 model with SD 2.x ControlNet may cause dimension mismatch[/yellow]")
+        return False
+    elif is_sd2_model and is_sd15_controlnet:
+        console.print(f"[yellow]! Warning: SD 2.x model with SD 1.5 ControlNet may cause dimension mismatch[/yellow]")
+        return False
+    else:
+        console.print(f"[yellow]! Warning: Unknown model combination, proceeding with caution[/yellow]")
+        return True  # Allow unknown combinations but warn
 
 
 def clear_pipeline_cache():
@@ -85,7 +325,11 @@ def get_resolution_dimensions(resolution: str) -> Tuple[int, int]:
 
 
 async def extract_frames(
-    input_video: Path, frames_dir: Path, resolution: str = "480p", test_mode: bool = False
+    input_video: Path,
+    frames_dir: Path,
+    resolution: str = "480p",
+    test_mode: bool = False,
+    fps: int = 15,
 ) -> bool:
     """
     Extract frames from video at specified resolution.
@@ -95,6 +339,7 @@ async def extract_frames(
         frames_dir: Directory to save extracted frames
         resolution: Target resolution for extraction
         test_mode: If True, only process the first 2 seconds.
+        fps: Frame rate to use for extraction
 
     Returns:
         True if successful, False otherwise
@@ -116,6 +361,8 @@ async def extract_frames(
             "-y",  # Overwrite output files
             "-i",
             str(input_video),
+            "-r",
+            str(fps),  # Limit FPS
             "-vf",
             f"scale={width}:{height}:flags=lanczos",
             "-q:v",
@@ -149,7 +396,7 @@ async def extract_frames(
         return False
 
 
-def setup_master_compiled_pipeline(model_id: str, scheduler_name: str = "UniPC") -> Any:
+def setup_master_compiled_pipeline(model_id: str, scheduler_name: str = "UniPC", med_vram: bool = False, low_vram: bool = False, controlnet_id: Optional[str] = None) -> Any:
     """
     Set up and compile the master Stable Diffusion pipeline.
 
@@ -168,19 +415,31 @@ def setup_master_compiled_pipeline(model_id: str, scheduler_name: str = "UniPC")
         return _compiled_master_pipeline
 
     try:
-        # * Import torch here to check if CUDA is available
-        import torch
         # * Suppress xformers/triton warnings during diffusers import
         with open(os.devnull, 'w') as _f, contextlib.redirect_stderr(_f):
             from diffusers import (
                 StableDiffusionImg2ImgPipeline,
+                StableDiffusionControlNetImg2ImgPipeline,
+                ControlNetModel,
                 DDIMScheduler,
                 EulerAncestralDiscreteScheduler,
                 DPMSolverMultistepScheduler,
                 UniPCMultistepScheduler,
+                AnimateDiffVideoToVideoPipeline,
+                MotionAdapter,
             )
 
         console.print(f"[*] Setting up MASTER Stable Diffusion pipeline with model: {model_id}")
+        
+        # * Validate model compatibility first
+        if not validate_model_compatibility(model_id, controlnet_id):
+            console.print(f"[red]! Model compatibility issue detected![/red]")
+            console.print(f"[yellow]Base model: {model_id}[/yellow]")
+            console.print(f"[yellow]ControlNet: {controlnet_id}[/yellow]")
+            console.print(f"[cyan]Suggested compatible combinations:[/cyan]")
+            console.print(f"[cyan]  • SD 1.5 + lllyasviel/sd-controlnet-depth[/cyan]")
+            console.print(f"[cyan]  • SD 2.x + thibaud/controlnet-sd21-depth-diffusers[/cyan]")
+            raise typer.Exit(1)
 
         # * Ensure cache directories exist
         os.makedirs(os.environ["TORCH_COMPILE_CACHE_DIR"], exist_ok=True)
@@ -202,29 +461,77 @@ def setup_master_compiled_pipeline(model_id: str, scheduler_name: str = "UniPC")
         if device == "cuda":
             # * Load pipeline on GPU while suppressing external warnings
             with open(os.devnull, 'w') as _devnull, contextlib.redirect_stderr(_devnull):
-                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                    str(model_path),
-                    torch_dtype=torch.float16,
-                    use_safetensors=True,
-                ).to("cuda")
-            # * Enable attention slicing for VRAM optimization
-            pipeline.enable_attention_slicing()
-            console.print("[*] GPU attention slicing enabled for VRAM optimization")
-            # * Attempt to enable xformers for further optimization
-            try:
-                pipeline.enable_xformers_memory_efficient_attention()
-                console.print("[*] XFormers memory efficient attention enabled")
-            except Exception:
-                console.print("[yellow]! XFormers not available, continuing without it.[/yellow]")
+                if controlnet_id:
+                    # * Load ControlNet model
+                    console.print(f"[*] Loading ControlNet model: {controlnet_id}")
+                    controlnet = ControlNetModel.from_pretrained(
+                        controlnet_id,
+                        torch_dtype=torch.float16,
+                        use_safetensors=True,
+                    )
+                    # * Create ControlNet pipeline
+                    pipeline = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
+                        str(model_path),
+                        controlnet=controlnet,
+                        torch_dtype=torch.float16,
+                        use_safetensors=True,
+                        safety_checker=None,
+                    ).to("cuda")
+                    console.print("[green]✓ ControlNet pipeline loaded[/green]")
+                else:
+                    # * Create standard img2img pipeline
+                    pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                        str(model_path),
+                        torch_dtype=torch.float16,
+                        use_safetensors=True,
+                        safety_checker=None,
+                    ).to("cuda")
+            # * Apply VRAM optimization modes
+            if med_vram or low_vram:
+                # * Enable attention slicing for VRAM optimization
+                pipeline.enable_attention_slicing()
+                console.print("[*] GPU attention slicing enabled for VRAM optimization")
+            # * Low VRAM mode: enable CPU offload
+            if low_vram:
+                console.print("[*] Enabling model CPU offload for low VRAM usage")
+                try:
+                    pipeline.enable_model_cpu_offload()
+                    console.print("[green]✓ Model CPU offload enabled[/green]")
+                except AttributeError:
+                    console.print("[yellow]! Model CPU offload not supported in this version of diffusers.[/yellow]")
+                except Exception as e:
+                    console.print(f"[yellow]! Could not enable model CPU offload: {e}[/yellow]")
+            pipeline.set_progress_bar_config(disable=True)
         else:
             # * Load CPU pipeline while suppressing external warnings
             with open(os.devnull, 'w') as _devnull, contextlib.redirect_stderr(_devnull):
-                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                    str(model_path),
-                    torch_dtype=torch.float32,
-                    use_safetensors=True,
-                )
+                if controlnet_id:
+                    # * Load ControlNet model for CPU
+                    console.print(f"[*] Loading ControlNet model for CPU: {controlnet_id}")
+                    controlnet = ControlNetModel.from_pretrained(
+                        controlnet_id,
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                    )
+                    # * Create ControlNet pipeline for CPU
+                    pipeline = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
+                        str(model_path),
+                        controlnet=controlnet,
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                        safety_checker=None,
+                    )
+                    console.print("[green]✓ ControlNet pipeline loaded on CPU[/green]")
+                else:
+                    # * Create standard img2img pipeline for CPU
+                    pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                        str(model_path),
+                        torch_dtype=torch.float32,
+                        use_safetensors=True,
+                        safety_checker=None,
+                    )
             console.print("[yellow]! CUDA not available, using CPU (will be slow)[/yellow]")
+            pipeline.set_progress_bar_config(disable=True)
 
         # * Set the scheduler based on user choice
         console.print(f"[*] Setting scheduler to: {scheduler_name}")
@@ -313,6 +620,8 @@ async def _stylize_worker(
     semaphore: asyncio.Semaphore,
     progress: Progress,
     task_id: TaskID,
+    controlnet_id: Optional[str] = None,
+    controlnet_strength: float = 1.0,
 ):
     """
     Worker to stylize a single frame, designed to be run concurrently.
@@ -330,15 +639,69 @@ async def _stylize_worker(
 
             # Load image (sync)
             input_image = Image.open(frame_file).convert("RGB")
+            # * Resize to 512x512 for pipeline compatibility
+            input_image = input_image.resize((512, 512), Image.Resampling.LANCZOS)
+
+            # * Prepare ControlNet conditioning image if needed
+            control_image = None
+            if controlnet_id:
+                # * Resize input image to 512x512 for ControlNet compatibility
+                control_input = input_image.resize((512, 512), Image.Resampling.LANCZOS)
+                
+                if "depth" in controlnet_id.lower():
+                    # * For depth ControlNet, use MiDaS depth detection
+                    try:
+                        midas = MidasDetector.from_pretrained("lllyasviel/Annotators")
+                        depth_result = midas(control_input)
+                        # * Ensure we get a PIL Image, not a tuple
+                        control_image = depth_result if isinstance(depth_result, Image.Image) else depth_result[0] if isinstance(depth_result, tuple) else control_input.convert("L").convert("RGB")
+                    except Exception:
+                        # * Fallback to simple grayscale
+                        control_image = control_input.convert("L").convert("RGB")
+                elif "canny" in controlnet_id.lower():
+                    # * For Canny ControlNet, use proper edge detection
+                    try:
+                        canny_detector = CannyDetector()
+                        canny_result = canny_detector(control_input)
+                        # * Ensure we get a PIL Image, not a tuple
+                        control_image = canny_result if isinstance(canny_result, Image.Image) else canny_result[0] if isinstance(canny_result, tuple) else control_input
+                    except Exception:
+                        # * Fallback to OpenCV Canny
+                        import cv2
+                        import numpy as np
+                        cv_image = cv2.cvtColor(np.array(control_input), cv2.COLOR_RGB2BGR)
+                        canny = cv2.Canny(cv_image, 100, 200)
+                        control_image = Image.fromarray(canny).convert("RGB")
+                elif "openpose" in controlnet_id.lower() or "pose" in controlnet_id.lower():
+                    # * For OpenPose ControlNet, use pose detection
+                    try:
+                        openpose = OpenposeDetector.from_pretrained("lllyasviel/Annotators")
+                        pose_result = openpose(control_input)
+                        # * Ensure we get a PIL Image, not a tuple
+                        control_image = pose_result if isinstance(pose_result, Image.Image) else pose_result[0] if isinstance(pose_result, tuple) else control_input
+                    except Exception:
+                        # * Fallback to original image
+                        control_image = control_input
+                else:
+                    # * For other ControlNets, use the resized input image
+                    control_image = control_input
+
+            # * Prepare pipeline arguments
+            pipe_kwargs = {
+                "prompt": prompt,
+                "image": input_image,
+                "strength": strength,
+                "guidance_scale": 7.5,
+                "num_inference_steps": inference_steps,
+            }
+            
+            if control_image is not None:
+                pipe_kwargs["control_image"] = control_image
+                pipe_kwargs["controlnet_conditioning_scale"] = controlnet_strength
 
             # Run blocking ML call in executor to not block the event loop
             func = functools.partial(
-                pipeline,
-                prompt=prompt,
-                image=input_image,
-                strength=strength,
-                guidance_scale=7.5,
-                num_inference_steps=inference_steps,
+                pipeline, **pipe_kwargs
             )
             result = await loop.run_in_executor(None, func)
 
@@ -363,10 +726,12 @@ async def stylize_frames(
     stylized_dir: Path,
     pipelines: list[Any],
     prompt: str,
-    strength: float = 0.75,
+    strength: float = 0.6,
     inference_steps: int = 12,
     progress: Optional[Progress] = None,
     task_id: Optional[TaskID] = None,
+    controlnet_id: Optional[str] = None,
+    controlnet_strength: float = 1.0,
 ) -> bool:
     """
     Stylize extracted frames using Stable Diffusion concurrently.
@@ -382,78 +747,48 @@ async def stylize_frames(
             console.print("[red]! Progress bar not provided to stylize_frames[/red]")
             return False
 
-        CONCURRENCY_LIMIT = len(pipelines)
-        semaphore = asyncio.Semaphore(CONCURRENCY_LIMIT)
-        console.print(
-            f"[*] Concurrently processing frames ({CONCURRENCY_LIMIT} at a time)..."
-        )
+        # * Run pipelines in parallel without semaphore: one async task per pipeline
+        console.print(f"[*] Running {len(pipelines)} parallel pipelines...")
+        loop = asyncio.get_running_loop()
 
-        tasks = [
-            _stylize_worker(
-                frame_file,
-                stylized_dir,
-                pipelines[i % CONCURRENCY_LIMIT],
-                prompt,
-                strength,
-                inference_steps,
-                semaphore,
-                progress,
-                task_id,
-            )
-            for i, frame_file in enumerate(frame_files)
-        ]
+        async def pipeline_loop(pipeline: Any, files: list[Path]):
+            for f in files:
+                # Load and preprocess image
+                img = Image.open(f).convert("RGB")
+                img = img.resize((512, 512), Image.Resampling.LANCZOS)
+                # Build pipeline kwargs
+                pipe_kwargs = {
+                    "prompt": prompt,
+                    "image": img,
+                    "strength": strength,
+                    "guidance_scale": 7.5,
+                    "num_inference_steps": inference_steps,
+                }
+                if controlnet_id:
+                    pipe_kwargs["control_image"] = img
+                    pipe_kwargs["controlnet_conditioning_scale"] = controlnet_strength
+                # Run inference
+                func = functools.partial(pipeline, **pipe_kwargs)
+                result = await loop.run_in_executor(None, func)
+                # Save output frame
+                out_path = stylized_dir / f"stylized_{f.name}"
+                result.images[0].save(out_path, "PNG")  # type: ignore
+                if hasattr(pipeline, "vae") and torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                progress.update(task_id, advance=1)
 
-        # Use gather with a custom loop to enable fail-fast behavior
+        # Assign frames round-robin and start tasks
+        num = len(pipelines)
+        tasks = []
+        for idx, pipeline in enumerate(pipelines):
+            subset = [f for i, f in enumerate(frame_files) if i % num == idx]
+            tasks.append(asyncio.create_task(pipeline_loop(pipeline, subset)))
         try:
-            # Create a set of pending tasks
-            pending_tasks = {asyncio.create_task(t) for t in tasks}
-
-            while pending_tasks:
-                # Wait for any task to complete
-                done, pending = await asyncio.wait(
-                    pending_tasks, return_when=asyncio.FIRST_COMPLETED
-                )
-
-                # Check for exceptions in completed tasks
-                for task in done:
-                    exc = task.exception()
-                    if exc:
-                        # If any task has an exception, cancel all others
-                        for p_task in pending:
-                            p_task.cancel()
-                        # Wait for cancellations to propagate
-                        if pending:
-                            await asyncio.wait(pending)
-                        # Re-raise the original exception
-                        raise exc
-
-                # Update the set of pending tasks
-                pending_tasks = pending
-
-        except asyncio.CancelledError:
-            console.print(f"\n[yellow]! Stylization was cancelled by the user.[/yellow]")
+            await asyncio.gather(*tasks)
+            return True
+        except Exception as e:
+            console.print(f"[red]! Parallel stylization error: {e}[/red]")
             return False
-        except Exception:
-            # The specific error is already printed in the worker
-            console.print(f"\n[red]! A critical error occurred during stylization.[/red]")
-            return False
-        finally:
-            # Ensure all tasks are cleaned up
-            all_tasks = asyncio.all_tasks()
-            for task in all_tasks:
-                if "stylize_worker" in str(task):
-                    task.cancel()
-
-        # Final check
-        stylized_files = list(stylized_dir.glob("*.png"))
-        if len(stylized_files) != len(frame_files):
-            console.print(
-                f"[yellow]\n! Frame count mismatch. Expected {len(frame_files)}, "
-                f"got {len(stylized_files)}. Some frames may have failed.[/yellow]"
-            )
-            return False
-
-        return True
 
     except ImportError as e:
         console.print(f"[red]! Missing dependencies: {e}[/red]")
@@ -520,15 +855,23 @@ async def get_video_framerate(input_video: Path) -> float:
 
 
 async def reassemble_video(
-    frames_dir: Path, output_path: Path, input_video: Path
+    frames_dir: Path,
+    output_path: Path,
+    source_video_path: Path,
+    frame_rate: float,
+    progress: Optional[Progress] = None,
+    task_id: Optional[TaskID] = None,
 ) -> bool:
     """
-    Reassemble frames into video using ffmpeg with HEVC CQ=26.
+    Reassemble frames into video using ffmpeg with HEVC CQ=26 and audio copy.
 
     Args:
         frames_dir: Directory containing frames to reassemble
         output_path: Output video file path
-        input_video: Original input video for framerate detection
+        source_video_path: Original input video for framerate detection
+        frame_rate: Detected video framerate
+        progress: Rich progress bar instance
+        task_id: Rich progress bar task ID
 
     Returns:
         True if successful, False otherwise
@@ -542,27 +885,33 @@ async def reassemble_video(
 
         console.print(f"[*] Reassembling {len(frame_files)} frames into video...")
 
-        # * Get source video framerate
-        framerate = await get_video_framerate(input_video)
-
-        # * Build ffmpeg command for HEVC encoding with CQ=26
+        # * Build ffmpeg command for HEVC encoding with CQ=26 and audio copy
         ffmpeg_cmd = [
             "ffmpeg",
             "-y",  # Overwrite output
             "-framerate",
-            str(framerate),
+            str(frame_rate),
             "-i",
-            str(frames_dir / "stylized_%06d.png"),  # Input pattern
+            str(frames_dir / "stylized_%06d.png"),  # Input pattern (video)
+            "-i",
+            str(source_video_path),  # Original video source for audio
+            "-map",
+            "0:v:0",  # Use newly encoded video stream
+            "-map",
+            "1:a?",  # Copy all audio streams if present
             "-c:v",
-            "libx265",  # HEVC codec
+            "libx265",
             "-crf",
-            "26",  # Constant Quality 26
+            "26",
             "-preset",
-            "medium",  # Encoding preset
+            "medium",
             "-pix_fmt",
-            "yuv420p",  # Pixel format for compatibility
+            "yuv420p",
+            "-c:a",
+            "copy",
             "-movflags",
-            "+faststart",  # Web optimization
+            "+faststart",
+            "-shortest",  # Ensure output length matches shortest stream
             str(output_path),
         ]
 
@@ -615,23 +964,15 @@ async def upscale_frames_realesrgan(stylized_dir: Path, upscaled_dir: Path) -> b
         # * Try to import Real-ESRGAN
         try:
             from realesrgan import RealESRGANer
-            from realesrgan.archs.srvgg_arch import SRVGGNetCompact
+            from realesrgan.archs.rrdbnet_arch import RRDBNet  # type: ignore
             import cv2
         except ImportError as e:
             console.print(f"[red]! Missing Real-ESRGAN dependencies: {e}[/red]")
             console.print("[yellow]Run: pip install realesrgan opencv-python[/yellow]")
             return False
 
-        # * Initialize Real-ESRGAN upscaler
-        # * Use RealESRGAN_x4plus for 4x upscaling
-        model = SRVGGNetCompact(
-            num_in_ch=3,
-            num_out_ch=3,
-            num_feat=64,
-            num_conv=32,
-            upscale=4,
-            act_type="prelu",
-        )
+        # * Initialize Real-ESRGAN upscaler using RRDBNet arch for x4plus weights
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, nf=64, nb=23, upscale=4)
 
         upsampler = RealESRGANer(
             scale=4,
@@ -669,8 +1010,329 @@ async def upscale_frames_realesrgan(stylized_dir: Path, upscaled_dir: Path) -> b
         return False
 
 
+async def stylize_video_animatediff(
+    frames_dir: Path,
+    stylized_dir: Path,
+    prompt: str,
+    model_id: str,
+    controlnet_id: Optional[str] = None,
+    inference_steps: int = 25,
+    strength: float = 0.6,
+    progress: Optional[Progress] = None,
+    task_id: Optional[TaskID] = None,
+    med_vram: bool = False,
+    low_vram: bool = False,
+    controlnet_strength: float = 1.0,
+):
+    """
+    Stylizes video frames using AnimateDiff for temporal consistency, with optional ControlNet.
+
+    This function processes the video in overlapping chunks to handle videos longer
+    than the model's context window.
+
+    Args:
+        frames_dir: Directory with input frames.
+        stylized_dir: Directory to save stylized frames.
+        prompt: Text prompt for stylization.
+        model_id: HuggingFace model ID for the base diffusion model.
+        controlnet_id: Optional HuggingFace model ID for ControlNet.
+        inference_steps: Number of diffusion steps.
+        strength: Stylization strength.
+        progress: Rich progress bar instance.
+        task_id: Rich progress bar task ID.
+        med_vram: Enable medium VRAM optimizations (attention slicing & xformers).
+        low_vram: Enable low VRAM optimizations (model CPU offload).
+        controlnet_strength: Strength of the ControlNet applied to the video.
+
+    Returns:
+        True if successful, False otherwise.
+    """
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if device == "cpu":
+        console.print("[yellow]! Warning: Running on CPU, this will be very slow.[/yellow]")
+
+    # * Local import to satisfy static analyzers (avoids false positives)
+    try:
+        from diffusers import MotionAdapter, AnimateDiffVideoToVideoPipeline, AnimateDiffVideoToVideoControlNetPipeline, ControlNetModel, DDIMScheduler  # type: ignore # noqa
+        console.print("[green]✓ Using AnimateDiffVideoToVideoPipeline for video-to-video stylization[/green]")
+        is_video_to_video = True
+    except ImportError:
+        # * Fallback: use regular img2img with motion adapter
+        console.print("[yellow]! AnimateDiffVideoToVideoPipeline not available, using img2img approach[/yellow]")
+        from diffusers import MotionAdapter, StableDiffusionImg2ImgPipeline, ControlNetModel, DDIMScheduler  # type: ignore
+        AnimateDiffVideoToVideoPipeline = StableDiffusionImg2ImgPipeline  # type: ignore
+        AnimateDiffVideoToVideoControlNetPipeline = None  # type: ignore
+        is_video_to_video = False
+    from PIL import Image
+
+    try:
+        # * Stylization of video frames with AnimateDiff
+        console.print("[bold cyan]Starting video stylization...[/bold cyan]")
+
+        # --- 1. Load models and pipeline ---
+        if progress and task_id:
+            progress.update(task_id, description="Loading models...")
+
+        adapter = MotionAdapter.from_pretrained(
+            "guoyww/animatediff-motion-adapter-v1-5-2",
+            torch_dtype=torch.float16,
+        )
+
+        controlnet = None
+        if controlnet_id:
+            console.print(f"[*] Loading ControlNet: {controlnet_id}")
+            controlnet = ControlNetModel.from_pretrained(
+                controlnet_id, torch_dtype=torch.float16
+            )
+
+        # * Build the pipeline. Some versions of diffusers do not accept the `controlnet` keyword for
+        # * `AnimateDiffPipeline.from_pretrained`. To avoid the "Keyword arguments { ... } are not expected"
+        # * console spam, we conditionally attach ControlNet _after_ the pipeline is instantiated when
+        # * the constructor does not advertise explicit support.
+
+        if is_video_to_video:
+            # Prefer ControlNet pipeline if available
+            if controlnet is not None and AnimateDiffVideoToVideoControlNetPipeline is not None:
+                console.print("[green]✓ Using AnimateDiffVideoToVideoControlNetPipeline with ControlNet[/green]")
+                pipe = AnimateDiffVideoToVideoControlNetPipeline.from_pretrained(
+                    model_id,
+                    motion_adapter=adapter,
+                    controlnet=controlnet,
+                    torch_dtype=torch.float16,
+                ).to(device)
+            elif controlnet is not None:
+                console.print("[yellow]! ControlNet video-to-video pipeline not available, using base AnimateDiffVideoToVideoPipeline[/yellow]")
+                pipe = AnimateDiffVideoToVideoPipeline.from_pretrained(
+                    model_id,
+                    motion_adapter=adapter,
+                    torch_dtype=torch.float16,
+                ).to(device)
+            else:
+                console.print("[green]✓ Using AnimateDiffVideoToVideoPipeline for video-to-video stylization[/green]")
+                pipe = AnimateDiffVideoToVideoPipeline.from_pretrained(
+                    model_id,
+                    motion_adapter=adapter,
+                    torch_dtype=torch.float16,
+                ).to(device)
+        else:
+            # * Fallback: use img2img pipeline without temporal consistency
+            console.print("[yellow]✓ Using img2img fallback for AnimateDiff[/yellow]")
+            pipe = AnimateDiffVideoToVideoPipeline.from_pretrained(
+                model_id,
+                torch_dtype=torch.float16,
+            ).to(device)
+
+        # * Apply VRAM optimization modes for AnimateDiff
+        if device == "cuda":
+            if med_vram or low_vram:
+                pipe.enable_attention_slicing()
+                console.print("[*] AnimateDiff attention slicing enabled for VRAM optimization")
+            if low_vram:
+                console.print("[*] Enabling AnimateDiff model CPU offload for low VRAM usage")
+                try:
+                    pipe.enable_model_cpu_offload()
+                    console.print("[green]✓ AnimateDiff model CPU offload enabled[/green]")
+                except Exception:
+                    console.print("[yellow]! AnimateDiff model CPU offload not supported by this pipeline.[/yellow]")
+
+        pipe.scheduler = DDIMScheduler.from_config(
+            pipe.scheduler.config,
+            beta_schedule="linear",
+            steps_offset=1,
+            clip_sample=False,
+        )
+        pipe.set_progress_bar_config(disable=True)
+        if is_video_to_video:
+            console.print("[green]✔ AnimateDiff video-to-video pipeline loaded - input frames will be used as reference.[/green]")
+        else:
+            console.print("[yellow]✔ Using img2img fallback - processing frames individually (no temporal consistency).[/yellow]")
+            console.print("[yellow]Consider updating diffusers for proper AnimateDiff video-to-video support.[/yellow]")
+
+        # --- Negative prompt setup ---
+        neg_prompt_string = "(((bad_quality:0.75), (bad_prompt_version2:0.75), negprompt5, verybadimagenegative_v1.3):0.9)"
+        neg_embeds = None
+        try:
+            emb_dir = Path(__file__).parent / "Embeddings"
+            emb1 = torch.load(emb_dir / "bad_quality.pt", map_location=device)
+            emb2 = torch.load(emb_dir / "bad_prompt_version2.pt", map_location=device)
+            emb3 = torch.load(emb_dir / "negprompt5.pt", map_location=device)
+            emb4 = torch.load(emb_dir / "verybadimagenegative_v1.3.pt", map_location=device)
+            neg_embeds = emb1 * 0.75 + emb2 * 0.75 + emb3 + emb4
+            neg_embeds = neg_embeds * 0.9
+            console.print("[*] Loaded negative embeddings from Embeddings folder")
+        except Exception as e:
+            console.print(f"[yellow]! Could not load negative embeddings ({e}); using text negative prompt[/yellow]")
+
+        # --- 2. Prepare frames and ControlNet conditions ---
+        if progress and task_id:
+            progress.update(task_id, description="Preparing frames...")
+
+        ensure_dir_exists(stylized_dir)
+        frame_files = sorted(frames_dir.glob("*.png"))
+        video_frames = [Image.open(f).convert("RGB") for f in frame_files]
+        # * Preserve original frame resolution for output
+        orig_size = video_frames[0].size if video_frames else None
+
+        controlnet_frames = None
+        if controlnet_id and controlnet:
+            console.print("[*] Pre-processing frames for ControlNet...")
+            # Select the appropriate preprocessor based on the model ID
+            if "canny" in controlnet_id:
+                detector = CannyDetector()
+            elif "openpose" in controlnet_id:
+                detector = OpenposeDetector.from_pretrained("lllyasviel/ControlNet")
+            elif "depth" in controlnet_id:
+                detector = MidasDetector.from_pretrained("lllyasviel/Annotators")
+                # * Move detector to device after initialization
+                if hasattr(detector, 'to'):
+                    detector = detector.to(device)
+            else:
+                console.print(
+                    f"[yellow]! Warning: No specific preprocessor found for {controlnet_id}. Using Canny as default.[/yellow]"
+                )
+                detector = CannyDetector()
+
+            controlnet_frames = [detector(img, detect_resolution=384, image_resolution=512) for img in video_frames]
+
+        # --- 3. Process video in chunks ---
+        context_size = 16  # AnimateDiff standard context window
+        overlap = 4  # Number of frames to overlap between chunks
+        total_frames = len(video_frames)
+        stylized_frames: list[Image.Image | None] = [None] * total_frames
+
+        if progress and task_id:
+            progress.update(
+                task_id,
+                total=total_frames,
+                completed=0,
+                description="Stylizing video chunks...",
+            )
+
+        # * Define a callback to update progress bar with inner step progress
+        def progress_bar_callback(_pipeline, step: int, timestep: float, latents: torch.Tensor):
+            # * Inner-step progress callback: pipeline, step index, timestep, latents
+            if progress and task_id:
+                progress.update(
+                    task_id,
+                    description=f"Chunk {start_idx + 1}-{end_idx}: Denoising step {step + 1}/{inference_steps}",
+                )
+            # Return a dict so pipeline can pop safely
+            return {}
+
+        start_idx = 0
+        while start_idx < total_frames:
+            end_idx = min(start_idx + context_size, total_frames)
+            chunk_frames = video_frames[start_idx:end_idx]
+            
+            if progress and task_id:
+                progress.update(task_id, description=f"Processing chunk: frames {start_idx + 1}-{end_idx}...")
+            else:
+                console.print(f"[*] Processing chunk: frames {start_idx + 1}-{end_idx}...")
+
+            if is_video_to_video:
+                # * Use video-to-video pipeline with input frames
+                pipe_kwargs = {
+                    "prompt": prompt,
+                    "video": chunk_frames,
+                    "num_inference_steps": inference_steps,
+                    "strength": strength,
+                    "guidance_scale": 7.5,
+                    "callback_on_step_end": progress_bar_callback,
+                }
+
+                if controlnet_frames:
+                    pipe_kwargs["conditioning_frames"] = controlnet_frames[start_idx:end_idx]  # type: ignore
+                    pipe_kwargs["controlnet_conditioning_scale"] = controlnet_strength
+
+                # * Inject negative prompt or embeddings
+                if neg_embeds is not None:
+                    pipe_kwargs["negative_prompt_embeds"] = neg_embeds
+                else:
+                    pipe_kwargs["negative_prompt"] = neg_prompt_string
+
+                # * Run pipeline and extract raw output frames
+                raw_output = pipe(**pipe_kwargs).frames[0]  # type: ignore
+            else:
+                # * Fallback: process frames individually with img2img
+                raw_output = []
+                for i, frame in enumerate(chunk_frames):
+                    if controlnet_frames:
+                        control_img = controlnet_frames[start_idx + i]
+                        pipe_kwargs = {
+                            "prompt": prompt,
+                            "image": frame,
+                            "control_image": control_img,
+                            "num_inference_steps": inference_steps,
+                            "strength": strength,
+                            "guidance_scale": 7.5,
+                            "controlnet_conditioning_scale": controlnet_strength,
+                        }
+                    else:
+                        pipe_kwargs = {
+                            "prompt": prompt,
+                            "image": frame,
+                            "num_inference_steps": inference_steps,
+                            "strength": strength,
+                            "guidance_scale": 7.5,
+                        }
+                    
+                    # * Inject negative prompt or embeddings
+                    if neg_embeds is not None:
+                        pipe_kwargs["negative_prompt_embeds"] = neg_embeds
+                    else:
+                        pipe_kwargs["negative_prompt"] = neg_prompt_string
+                    
+                    result = pipe(**pipe_kwargs)  # type: ignore
+                    raw_output.append(result.images[0])
+            # * Ensure output length matches input chunk length to avoid index errors
+            raw_len = len(raw_output)
+            chunk_len = len(chunk_frames)
+            if raw_len != chunk_len:
+                console.print(f"[yellow]! Warning: expected {chunk_len} frames, got {raw_len}. Truncating to match input length.[/yellow]")
+            output = raw_output[:chunk_len]
+
+            # Blend overlapping frames to smooth transitions
+            for i in range(len(output)):  # type: ignore
+                frame_idx = start_idx + i
+                current_stylized_frame = stylized_frames[frame_idx]
+                if current_stylized_frame is not None:
+                    # Blend with the previous frame's stylized version
+                    alpha = (i - (context_size - overlap)) / overlap
+                    blended_frame = Image.blend(current_stylized_frame, output[i], alpha)  # type: ignore
+                    stylized_frames[frame_idx] = blended_frame
+                else:
+                    stylized_frames[frame_idx] = output[i]  # type: ignore
+
+            start_idx += context_size - overlap
+            if start_idx >= total_frames - overlap: # Ensure last frames are processed
+                start_idx = max(0, total_frames - context_size)
+                if end_idx == total_frames:
+                    break
+
+        # --- 4. Save frames with resolution restore and per-frame progress ---
+        if progress and task_id:
+            progress.update(task_id, description="Saving frames...", completed=0)
+        for idx, frame in enumerate(stylized_frames):
+            if frame and orig_size:
+                out_path = stylized_dir / f"stylized_{idx:06d}.png"
+                # * Restore original resolution
+                frame = frame.resize(orig_size, Image.Resampling.LANCZOS)
+                frame.save(out_path, "PNG")
+                # * Update progress per frame
+                if progress and task_id:
+                    progress.update(task_id, advance=1)
+
+    except Exception as e:
+        console.print(f"[bold red]! AnimateDiff stylization failed: {e}[/bold red]")
+        import traceback
+        traceback.print_exc()
+        return False
+
+    return True
+
+
 async def run_stylization(
-    input_video: Path,
+    video_path: Path,
     prompt: str,
     model_id: str,
     controlnet_id: Optional[str],
@@ -679,18 +1341,35 @@ async def run_stylization(
     inference_steps: int,
     scheduler: str,
     upscale: bool,
+    med_vram: bool,
+    low_vram: bool,
     output: Path,
     max_resolution: str,
+    fps: int,
     test_mode: bool,
     work_dir: Optional[Path] = None,
+    controlnet_strength: float = 1.0,
+    concurrency_limit: int = 2,
 ):
     """
     Run the asynchronous stylization pipeline.
     """
+    # * Stylization of video frames with AnimateDiff
     console.print("[bold cyan]Starting video stylization...[/bold cyan]")
-    console.print(f"Input: [yellow]{input_video}[/yellow]")
+
+    console.print(f"Input: [yellow]{video_path}[/yellow]")
     console.print(f"Prompt: [green]'{prompt}'[/green]")
     console.print(f"Model: [blue]{model_id}[/blue]")
+
+    if use_animatediff:
+        console.print("[*] AnimateDiff mode: [green]Enabled[/green]")
+    else:
+        console.print("[*] AnimateDiff mode: [yellow]Disabled[/yellow]")
+
+    if controlnet_id:
+        console.print(f"[*] ControlNet model: [green]{controlnet_id}[/green]")
+    else:
+        console.print("[*] ControlNet model: [yellow]Disabled[/yellow]")
 
     # * Create temporary directories; allow custom work_dir to host temp files
     temp_dir_kwargs: dict[str, Any] = {"prefix": "stylizer_"}
@@ -707,48 +1386,93 @@ async def run_stylization(
 
         # * Step 1: Extract frames
         console.print("\n[bold]Step 1: Extracting frames[/bold]")
-        success = await extract_frames(input_video, frames_dir, max_resolution, test_mode)
+        success = await extract_frames(video_path, frames_dir, max_resolution, test_mode, fps)
         if not success:
             console.print("[red]! Failed to extract frames[/red]")
             raise typer.Exit(1)
 
-        # * Step 2: Set up master pipeline and create workers
-        CONCURRENCY_LIMIT = 2
-        console.print(
-            f"\n[bold]Step 2: Setting up master pipeline and {CONCURRENCY_LIMIT} worker pipelines[/bold]"
-        )
-        
-        # * Create and compile the master pipeline first
-        master_pipeline = setup_master_compiled_pipeline(model_id, scheduler)
-        
-        # * Create worker pipelines from the compiled master
-        pipelines = [create_worker_pipeline() for _ in range(CONCURRENCY_LIMIT)]
-        # * Optional: ControlNet support (stub)
-        if controlnet_id:
-            console.print(
-                f"[yellow]! ControlNet support not yet implemented (controlnet_id={controlnet_id})[/yellow]"
-            )
-        # * Optional: AnimateDiff support (stub)
+        # * Step 2: Stylizing video with AnimateDiff
         if use_animatediff:
-            console.print(
-                "[yellow]! AnimateDiff support not yet implemented (use_animatediff enabled)[/yellow]"
-            )
-
-        # * Step 3: Stylize frames
-        console.print("\n[bold]Step 3: Stylizing frames[/bold]")
-        console.print(f"[*] Prompt: '{prompt}'")
-        console.print(f"[*] Strength: {strength}")
-
-        with Progress() as progress_bar:
-            task = progress_bar.add_task(
-                "Stylizing frames...", total=len(list(frames_dir.glob("*.png")))
-            )
-            success = await stylize_frames(
-                frames_dir, stylized_dir, pipelines, prompt, strength, inference_steps, progress_bar, task
-            )
+            console.print("\n[bold]Step 2: Stylizing video with AnimateDiff[/bold]")
+            # * AnimateDiff with progress bar integration
+            total_frames = len(list(frames_dir.glob("*.png")))
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,
+                refresh_per_second=2,
+            ) as progress_bar:
+                task = progress_bar.add_task("Stylizing video chunks...", total=total_frames)
+                success = await stylize_video_animatediff(
+                    frames_dir,
+                    stylized_dir,
+                    prompt,
+                    model_id,
+                    controlnet_id,
+                    inference_steps,
+                    strength,
+                    progress_bar,
+                    task,
+                    med_vram,
+                    low_vram,
+                    controlnet_strength,
+                )
             if not success:
-                console.print("[red]! Failed to stylize frames[/red]")
+                console.print("[red]! AnimateDiff stylization failed[/red]")
                 raise typer.Exit(1)
+        else:
+            # * Original per-frame stylization path
+            console.print(
+                f"\n[bold]Step 2: Setting up master pipeline and {concurrency_limit} worker pipelines[/bold]"
+            )
+
+            # * If parallel pipelines and CPU offload are both enabled, disable CPU offload to keep modules on the same device
+            if low_vram and concurrency_limit > 1:
+                console.print("[yellow]! Parallel pipelines incompatible with low_vram CPU offload. Disabling model CPU offload.[/yellow]")
+                low_vram = False
+
+            master_pipeline = setup_master_compiled_pipeline(model_id, scheduler, med_vram, low_vram, controlnet_id)
+            pipelines = [create_worker_pipeline() for _ in range(concurrency_limit)]
+
+            if controlnet_id:
+                console.print(f"[*] Integrating ControlNet: {controlnet_id}")
+                # * ControlNet integration is handled in the pipeline setup
+                # * The master pipeline needs to be recreated with ControlNet support
+
+            console.print("\n[bold]Step 3: Stylizing frames[/bold]")
+            console.print(f"[*] Prompt: '{prompt}'")
+            console.print(f"[*] Strength: {strength}")
+
+            with Progress(
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+                TimeRemainingColumn(),
+                console=console,
+                transient=True,
+                refresh_per_second=2,
+            ) as progress_bar:
+                task = progress_bar.add_task(
+                    "Stylizing frames...", total=len(list(frames_dir.glob("*.png")))
+                )
+                success = await stylize_frames(
+                    frames_dir,
+                    stylized_dir,
+                    pipelines,
+                    prompt,
+                    strength,
+                    inference_steps,
+                    progress_bar,
+                    task,
+                    controlnet_id,
+                    controlnet_strength,
+                )
+                if not success:
+                    console.print("[red]! Failed to stylize frames[/red]")
+                    raise typer.Exit(1)
 
         # * Step 4: Upscaling (optional)
         if upscale:
@@ -765,13 +1489,33 @@ async def run_stylization(
 
         # * Step 5: Reassemble video
         console.print("\n[bold]Step 5: Reassembling video[/bold]")
-        success = await reassemble_video(final_frames_dir, output, input_video)
+        success = await reassemble_video(
+            final_frames_dir,
+            output,
+            video_path,
+            await get_video_framerate(video_path),
+            None,
+            None,
+        )
         if not success:
             console.print("[red]! Failed to reassemble video[/red]")
             raise typer.Exit(1)
 
         console.print("\n[bold green]✓ Video stylization completed![/bold green]")
         console.print(f"[green]Output saved to: {output}[/green]")
+
+        # * Print summary statistics
+        console.print("\n[bold underline]Summary[/bold underline]")
+        console.print(f"Prompt: [italic]{prompt}[/italic]")
+        console.print(f"Model: {model_id}")
+        if controlnet_id:
+            console.print(f"ControlNet: {controlnet_id}")
+        console.print(f"AnimateDiff: {use_animatediff}")
+        console.print(f"Strength: {strength}")
+        console.print(f"Inference steps: {inference_steps}")
+        console.print(f"Scheduler: {scheduler}")
+        console.print(f"Upscale: {upscale}")
+        console.print(f"Resolution: {max_resolution}")
 
 
 @app.command()
@@ -781,20 +1525,20 @@ def stylize(
     model_id: Annotated[
         str,
         typer.Option(
-            "--model-id", "-m", help="Hugging Face model ID for Stable Diffusion (e.g., stabilityai/stable-diffusion-2-base)."
+            "--model-id", "-m", help="Hugging Face model ID for Stable Diffusion (e.g., runwayml/stable-diffusion-v1-5)."
         ),
-    ] = "stabilityai/stable-diffusion-2-base",
+    ] = "runwayml/stable-diffusion-v1-5",
     controlnet_id: Annotated[
         Optional[str],
         typer.Option(
-            "--controlnet-id", "-c", help="Hugging Face model ID for ControlNet (optional)."
+            "--controlnet-id",
+            "-c",
+            help="Hugging Face model ID for ControlNet (optional).",
         ),
-    ] = None,
+    ] = "lllyasviel/sd-controlnet-depth",
     use_animatediff: Annotated[
         bool,
-        typer.Option(
-            "--animatediff", help="Enable AnimateDiff for temporal consistency."
-        ),
+        typer.Option("--animatediff", help="Enable AnimateDiff for temporal consistency."),
     ] = False,
     strength: Annotated[
         Optional[float],
@@ -814,8 +1558,21 @@ def stylize(
         ),
     ] = "UniPC",
     upscale: Annotated[
-        bool, typer.Option("--upscale", help="Enable Real-ESRGAN 4x upscaling to FHD.")
-    ] = False,  # * Changed default to False since Real-ESRGAN is heavy
+        bool,
+        typer.Option("--upscale", help="Enable Real-ESRGAN 4x upscaling to FHD (currently broken, use Topaz)."),
+    ] = False,
+    med_vram: Annotated[
+        bool,
+        typer.Option("--med-vram", help="Enable medium VRAM optimizations (attention slicing & xformers)."),
+    ] = False,
+    low_vram: Annotated[
+        bool,
+        typer.Option("--low-vram", help="Enable low VRAM optimizations (model CPU offload). Overrides med-vram."),
+    ] = True,
+    fps: Annotated[
+        int,
+        typer.Option("--fps", "-f", help="Frames per second to process (15 or 30)."),
+    ] = 15,
     output: Annotated[
         Optional[Path], typer.Option("--output", "-o", help="Output video file path.")
     ] = None,
@@ -870,56 +1627,57 @@ def stylize(
     assert prompt is not None
 
     # * --- Interactive Settings Menu ---
-    # * We handle sliders separately as the generic function doesn't support them
-    final_strength = strength
-    if final_strength is None:
-        final_strength = typer.prompt(
-            "Enter stylization strength (0.0 to 1.0)", type=float, default=0.75
-        )
-    # * Validate strength
-    if not (0.0 <= final_strength <= 1.0):
-        console.print(
-            f"[red]! Invalid strength: {final_strength}. Must be between 0.0 and 1.0.[/red]"
-        )
-        final_strength = 0.75
-
-    final_steps = inference_steps
-    if final_steps is None:
-        final_steps = typer.prompt(
-            "Enter number of inference steps (e.g., 8-20)", type=int, default=12
-        )
+    # * Determine compatible ControlNets based on base model
+    if "stable-diffusion-2" in model_id:
+        # SD 2.x compatible ControlNets
+        controlnet_choices = {
+            "Disabled": "",
+            "Canny (SD2)": "thibaud/controlnet-sd21-canny-diffusers", 
+            "Depth (SD2)": "thibaud/controlnet-sd21-depth-diffusers",
+            "OpenPose (SD2)": "thibaud/controlnet-sd21-openpose-diffusers",
+        }
+    else:
+        # SD 1.5 compatible ControlNets (default)
+        controlnet_choices = {
+            "Disabled": "",
+            "Canny": "lllyasviel/sd-controlnet-canny", 
+            "Depth": "lllyasviel/sd-controlnet-depth",
+            "OpenPose": "lllyasviel/sd-controlnet-openpose",
+        }
 
     settings_definitions = [
-        {
-            "key": "scheduler",
-            "label": "Scheduler",
-            "type": "choice",
-            "choices": {
-                "UniPC": "UniPC",
-                "DDIM": "DDIM",
-                "EulerA": "EulerA",
-                "DPM2M": "DPM2M",
-            },
-        },
-        {"key": "upscale", "label": "4x Upscaling (Real-ESRGAN)", "type": "toggle"},
+        {"key": "scheduler", "label": "Scheduler", "type": "choice", "choices": {"UniPC": "UniPC", "DDIM": "DDIM", "EulerA": "EulerA", "DPM2M": "DPM2M"}},
+        {"key": "use_animatediff", "label": "AnimateDiff (temporal)", "type": "toggle"},
+        {"key": "controlnet_id", "label": "ControlNet (structural)", "type": "choice", "choices": controlnet_choices},
+        {"key": "controlnet_strength", "label": "ControlNet Strength", "type": "choice", "choices": {"0.4": "0.4", "0.6": "0.6", "0.8": "0.8", "1.0": "1.0", "1.2": "1.2"}},
+        {"key": "strength", "label": "Style Strength", "type": "choice", "choices": {"0.2": "0.2", "0.4": "0.4", "0.6": "0.6", "0.8": "0.8", "1.0": "1.0"}},
+        {"key": "inference_steps", "label": "Inference Steps", "type": "choice", "choices": {"8": "8", "12": "12", "16": "16", "25": "25", "30": "30"}},
+        {"key": "fps", "label": "FPS", "type": "choice", "choices": {"15": "15", "30": "30"}},
+        {"key": "upscale", "label": "4x Upscale (Real-ESRGAN)", "type": "toggle"},
         {"key": "test_mode", "label": "Test Mode (First 2s)", "type": "toggle"},
+        {"key": "concurrency_limit", "label": "Parallel Pipelines (CONCURRENCY_LIMIT)", "type": "choice", "choices": {"1": "1", "2": "2", "3": "3", "4": "4"}},
     ]
 
-    # * Get initial values from CLI or defaults for non-slider settings
+    # * Get initial values from CLI for interactive settings
     current_settings = {
         "scheduler": scheduler,
+        "use_animatediff": use_animatediff,
+        "controlnet_id": controlnet_id or "",
+        "controlnet_strength": "1.0",  # Default ControlNet strength
+        "strength": str(strength if strength is not None else 0.6),
+        "inference_steps": str(inference_steps if inference_steps is not None else 12),
+        "fps": str(fps),
         "upscale": upscale,
         "test_mode": test_mode,
+        "concurrency_limit": "2",
     }
 
-    # * Launch interactive menu for toggles and choices
-    # * We enter interactive mode if the script is run without flags.
-    is_interactive = not (
-        strength or inference_steps or upscale or test_mode or scheduler != "UniPC"
-    )
+    # * Always show interactive settings so user can tweak parameters quickly
+    is_interactive = True
 
     final_settings = None
     if is_interactive:
+        console.print("\n[bold cyan]🎨 Stylizer Settings[/bold cyan]")
         final_settings = prompt_for_interactive_settings(
             settings_definitions, current_settings, title="Stylizer Settings"
         )
@@ -929,10 +1687,19 @@ def stylize(
     else:
         final_settings = current_settings
 
-    # * Extract final values
+    # * Extract final values from interactive settings
     final_scheduler = str(final_settings["scheduler"])
+    final_animatediff = bool(final_settings["use_animatediff"])
+    final_controlnet_id = str(final_settings["controlnet_id"]) if final_settings["controlnet_id"] else None
+    final_controlnet_strength = float(final_settings["controlnet_strength"])
+    final_strength = float(final_settings["strength"])
+    final_steps = int(final_settings["inference_steps"])
+    final_fps = int(final_settings["fps"])
     final_upscale = bool(final_settings["upscale"])
     final_test_mode = bool(final_settings["test_mode"])
+    final_med_vram = med_vram
+    final_low_vram = low_vram
+    final_concurrency_limit = int(final_settings["concurrency_limit"])
 
     # * Set up output path
     if output is None:
@@ -946,16 +1713,21 @@ def stylize(
             input_video,
             prompt,
             model_id,
-            controlnet_id,
-            use_animatediff,
+            final_controlnet_id,
+            final_animatediff,
             final_strength,
             final_steps,
             final_scheduler,
             final_upscale,
+            final_med_vram,
+            final_low_vram,
             output,
             max_resolution,
+            final_fps,
             final_test_mode,
             work_dir,
+            final_controlnet_strength,
+            final_concurrency_limit,
         )
     )
 

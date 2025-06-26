@@ -9,6 +9,7 @@ such as downloading models and datasets.
 
 from pathlib import Path
 import os
+from typing import Optional, List
 from huggingface_hub import snapshot_download
 from rich.console import Console
 
@@ -23,9 +24,9 @@ if "HF_HOME" not in os.environ:
 
 def download_hf_model(
     repo_id: str,
-    cache_dir: str = None,
-    allow_patterns: list[str] = None,
-    ignore_patterns: list[str] = None,
+    cache_dir: Optional[str] = None,
+    allow_patterns: Optional[List[str]] = None,
+    ignore_patterns: Optional[List[str]] = None,
     revision: str = "main",
 ) -> Path:
     """

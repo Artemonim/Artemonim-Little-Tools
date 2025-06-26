@@ -20,12 +20,17 @@ dependencies = [
     "tqdm>=4.66.1",
     "opencv-python>=4.8",
     # Stable Diffusion dependencies
-    "diffusers>=0.21.0",
-    "transformers>=4.21.0",
+    "diffusers>=0.27.0",
+    "transformers>=4.30.0",
     "torch>=2.0.0",
     "torchvision>=0.15.0",
     "accelerate>=0.20.0",
     "realesrgan>=0.3.0",
+    "basicsr>=1.4.2",
+    "xformers>=0.0.20",
+    "controlnet-aux>=0.0.10",
+    "compel>=2.0.0",
+    "invisible-watermark>=0.2.0",
     # MatAnyone dependencies
     "cython",
     "gitpython>=3.1",
@@ -56,9 +61,10 @@ dependencies = [
     "pyyaml",
     "openmim",
     "psutil",
-    "ffmpeg-python",
+    "ffmpeg-python>=0.2.0",
     "thinplate @ git+https://github.com/cheind/py-thin-plate-spline",
     "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
+
 ]
 
 [project.optional-dependencies]

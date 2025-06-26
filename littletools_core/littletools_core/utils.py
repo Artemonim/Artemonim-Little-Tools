@@ -543,7 +543,7 @@ async def run_tasks_with_semaphore(
     )
 
     async def run_task(task: Any) -> None:
-        # Wait for the stop event before starting a new task
+        # Check for stop event before starting a new task
         if stop_event.is_set():
             return
 
@@ -552,22 +552,90 @@ async def run_tasks_with_semaphore(
                 try:
                     await task
                 except asyncio.CancelledError:
-                    pass  # Task cancellation is expected on interrupt
+                    # ! Task cancellation is expected on interrupt - re-raise to propagate
+                    raise
+                except Exception as e:
+                    # ! Log other exceptions but don't stop the entire process
+                    console.print(f"[red]! Task failed with exception: {e}[/red]")
 
-    # Create a future to await all tasks
-    all_tasks_future = asyncio.gather(*(run_task(task) for task in tasks))
+    # Create individual tasks that can be cancelled properly
+    running_tasks = [asyncio.create_task(run_task(task)) for task in tasks]
 
     try:
-        await all_tasks_future
+        # Create a task to monitor stop_event
+        stop_task = asyncio.create_task(stop_event.wait())
+
+        # Wait for either all tasks to complete or stop_event to be set
+        done, pending = await asyncio.wait(
+            running_tasks + [stop_task], return_when=asyncio.FIRST_COMPLETED
+        )
+
+        # If stop_event was triggered, cancel remaining tasks
+        if stop_task in done:
+            console.print(
+                "[yellow]! Stop event received, cancelling remaining tasks...[/yellow]"
+            )
+            for task in running_tasks:
+                if not task.done():
+                    task.cancel()
+
+            # Wait for cancellation to complete with timeout
+            if running_tasks:
+                try:
+                    await asyncio.wait_for(
+                        asyncio.gather(*running_tasks, return_exceptions=True),
+                        timeout=3.0,
+                    )
+                except asyncio.TimeoutError:
+                    console.print(
+                        "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
+                    )
+        else:
+            # All tasks completed normally, wait for any remaining
+            if pending:
+                await asyncio.wait(pending)
+
     except asyncio.CancelledError:
-        # This is expected if the main task is cancelled.
-        # Ensure all sub-tasks are also cancelled.
-        all_tasks_future.cancel()
-        await asyncio.sleep(0.1)  # Give a moment for cancellations to propagate
-    finally:
-        # Ensure the semaphore is released if main task is cancelled
-        # This is handled by context manager, but as a safeguard.
-        pass
+        # ! Cancel all running tasks if the main task is cancelled
+        console.print(
+            "[yellow]! Main task cancelled, stopping all subtasks...[/yellow]"
+        )
+        for task in running_tasks:
+            if not task.done():
+                task.cancel()
+
+        # Wait for all tasks to be cancelled with timeout
+        if running_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*running_tasks, return_exceptions=True), timeout=3.0
+                )
+            except asyncio.TimeoutError:
+                console.print(
+                    "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
+                )
+        raise
+    except KeyboardInterrupt:
+        # ! Handle direct keyboard interrupt
+        console.print(
+            "[yellow]! Keyboard interrupt received, stopping all tasks...[/yellow]"
+        )
+        stop_event.set()
+        for task in running_tasks:
+            if not task.done():
+                task.cancel()
+
+        # Wait for all tasks to be cancelled with timeout
+        if running_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*running_tasks, return_exceptions=True), timeout=3.0
+                )
+            except asyncio.TimeoutError:
+                console.print(
+                    "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
+                )
+        raise
 
 
 # * Export commonly used functions for easy importing

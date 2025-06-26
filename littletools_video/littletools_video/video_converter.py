@@ -210,9 +210,10 @@ def convert(
     stats.stats["total"] = len(files_to_process)
     estimator = BatchTimeEstimator()
     stop_event = asyncio.Event()
+    start_time = time.monotonic()  # ! Track start time for interruption statistics
 
     async def main_async_logic() -> float:
-        start_time = time.time()
+        logic_start_time = time.time()
         console.print("[*] Calculating total video duration for ETA...")
         for file_path in files_to_process:
             duration = await get_video_duration(str(file_path))
@@ -245,9 +246,9 @@ def convert(
         ]
 
         await run_tasks_with_semaphore(tasks, stop_event, concurrency)
-        return time.time() - start_time
+        return time.time() - logic_start_time
 
-    total_elapsed_time = 0
+    total_elapsed_time = 0.0
     try:
         total_elapsed_time = asyncio.run(main_async_logic())
     except KeyboardInterrupt:
@@ -255,6 +256,17 @@ def convert(
             "\n[yellow]! User interrupted the process. Shutting down...[/yellow]"
         )
         stop_event.set()
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Interrupted Process Summary ---")
+        stats.print_summary(elapsed_time)
+    except asyncio.CancelledError:
+        console.print("\n[yellow]! Process was cancelled. Shutting down...[/yellow]")
+        stop_event.set()
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Cancelled Process Summary ---")
+        stats.print_summary(elapsed_time)
 
     console.print("\n--- Conversion Summary ---")
     stats.print_summary(total_elapsed_time)
@@ -423,7 +435,25 @@ def single() -> None:
                     )
                     stats.increment("skipped")
 
-        asyncio.run(run_conversion())
+        try:
+            asyncio.run(run_conversion())
+        except KeyboardInterrupt:
+            console.print(
+                "\n[yellow]! User interrupted the process. Shutting down...[/yellow]"
+            )
+            # ! Show statistics before termination
+            elapsed_time = time.monotonic() - start_time
+            console.print("\n--- Interrupted Process Summary ---")
+            stats.print_summary(elapsed_time)
+        except asyncio.CancelledError:
+            console.print(
+                "\n[yellow]! Process was cancelled. Shutting down...[/yellow]"
+            )
+            # ! Show statistics before termination
+            elapsed_time = time.monotonic() - start_time
+            console.print("\n--- Cancelled Process Summary ---")
+            stats.print_summary(elapsed_time)
+
         elapsed_time = time.monotonic() - start_time
         stats.print_summary(elapsed_time)
         console.print("[green]✓ Conversion complete.[/green]")
@@ -562,6 +592,11 @@ def tree() -> None:
         if copy_other_files:
             console.print("\n[*] Copying non-video files...")
             for file_path in other_files_to_copy:
+                # ! Check for interruption during file copying
+                if stop_event.is_set():
+                    console.print("[yellow]! File copying interrupted.[/yellow]")
+                    break
+
                 relative_path = file_path.relative_to(input_dir)
                 destination_path = output_dir / relative_path
 
@@ -584,6 +619,13 @@ def tree() -> None:
             if video_files_to_process:
                 console.print("\n[*] Calculating total video duration for ETA...")
                 for file_path in video_files_to_process:
+                    # ! Check for interruption during duration calculation
+                    if stop_event.is_set():
+                        console.print(
+                            "[yellow]! Duration calculation interrupted.[/yellow]"
+                        )
+                        return
+
                     duration = await get_video_duration(str(file_path))
                     if duration:
                         estimator.add_item(duration)
@@ -619,8 +661,20 @@ def tree() -> None:
                     )
                     tasks.append(task)
 
-                concurrency = 2  # Hardcoded default from convert command
+                concurrency = (
+                    1  # ! Sequential processing to avoid GPU resource conflicts
+                )
                 await run_tasks_with_semaphore(tasks, stop_event, concurrency)
+
+        # ! Setup signal handler for graceful interruption
+        def signal_handler() -> None:
+            console.print("\n[yellow]! Interruption signal received...[/yellow]")
+            stop_event.set()
+
+        # ! Register signal handler before starting async operations
+        import signal
+
+        original_handler = signal.signal(signal.SIGINT, lambda s, f: signal_handler())
 
         try:
             asyncio.run(main_async_logic())
@@ -629,6 +683,22 @@ def tree() -> None:
                 "\n[yellow]! User interrupted the process. Shutting down...[/yellow]"
             )
             stop_event.set()
+            # ! Show statistics before termination
+            elapsed_time = time.monotonic() - start_time
+            console.print("\n--- Interrupted Process Summary ---")
+            stats.print_summary(elapsed_time)
+        except asyncio.CancelledError:
+            console.print(
+                "\n[yellow]! Process was cancelled. Shutting down...[/yellow]"
+            )
+            stop_event.set()
+            # ! Show statistics before termination
+            elapsed_time = time.monotonic() - start_time
+            console.print("\n--- Cancelled Process Summary ---")
+            stats.print_summary(elapsed_time)
+        finally:
+            # ! Restore original signal handler
+            signal.signal(signal.SIGINT, original_handler)
 
         elapsed_time = time.monotonic() - start_time
         stats.print_summary(elapsed_time)
@@ -772,11 +842,11 @@ def merge(
     estimator = BatchTimeEstimator()
     converted_files: List[Path] = []
     merge_success = False
+    start_time = time.monotonic()  # ! Track start time for interruption statistics
 
     try:
 
         async def merge_async_logic() -> bool:
-            nonlocal converted_files
             console.print("[*] Calculating total duration for ETA...")
             for file_path in inputs:
                 duration = await get_video_duration(str(file_path))
@@ -843,8 +913,16 @@ def merge(
 
     except KeyboardInterrupt:
         console.print("\n[yellow]! User interrupted the process.[/yellow]")
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Interrupted Process Summary ---")
+        stats.print_summary(elapsed_time)
     except Exception as e:
         console.print(f"\n[red]! An error occurred during merge: {e}[/red]")
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Error Process Summary ---")
+        stats.print_summary(elapsed_time)
     finally:
         if temp_dir.exists():
             console.print("[*] Cleaning up temporary files...")
@@ -859,6 +937,9 @@ def merge(
                     console.print(f"  - Deleted: {file_path.name}")
     else:
         console.print("\n[red]✗ Merge process failed or was interrupted.[/red]")
+
+    elapsed_time = time.monotonic() - start_time
+    stats.print_summary(elapsed_time)
 
 
 @app.command()
@@ -935,6 +1016,7 @@ def compile(
 
     stats = ProcessingStats()
     stats.stats["total"] = 1
+    start_time = time.monotonic()  # ! Track start time for interruption statistics
 
     async def do_compile() -> None:
         total_duration = await get_video_duration(str(primary_input))
@@ -963,14 +1045,25 @@ def compile(
 
     try:
         asyncio.run(do_compile())
+    except KeyboardInterrupt:
+        console.print("\n[yellow]! User interrupted the process.[/yellow]")
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Interrupted Process Summary ---")
+        stats.print_summary(elapsed_time)
     except Exception as e:
         stats.increment("errors")
         console.print(
             f"  [red]✗ Exception while compiling {primary_input.name}: {e}[/red]"
         )
         safe_delete(output_path)
+        # ! Show statistics before termination
+        elapsed_time = time.monotonic() - start_time
+        console.print("\n--- Error Process Summary ---")
+        stats.print_summary(elapsed_time)
 
-    stats.print_summary(0)
+    elapsed_time = time.monotonic() - start_time
+    stats.print_summary(elapsed_time)
 
 
 if __name__ == "__main__":

@@ -35,11 +35,13 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
         # In Python 3.10+, importlib.metadata.entry_points() returns a different
         # object, and the .get() method is replaced by .select().
         eps = importlib.metadata.entry_points()
-        if hasattr(eps, 'select'):
+        if hasattr(eps, "select"):
             entry_points = eps.select(group=COMMANDS_GROUP)
         else:
             # Fallback for Python < 3.10
-            entry_points = eps.get(COMMANDS_GROUP, [])  # pyright: ignore[reportAttributeAccessIssue]
+            entry_points = eps.get(
+                COMMANDS_GROUP, []
+            )  # pyright: ignore[reportAttributeAccessIssue]
 
         for entry_point in entry_points:
             try:
@@ -47,7 +49,9 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
                 if isinstance(plugin_app, typer.Typer):
                     plugins[entry_point.name] = plugin_app
             except Exception as e:
-                console.print(f"[red]! Error loading plugin '{entry_point.name}': {e}[/red]")
+                console.print(
+                    f"[red]! Error loading plugin '{entry_point.name}': {e}[/red]"
+                )
     except Exception as e:
         console.print(f"[red]! Error discovering plugins: {e}[/red]")
     return plugins
@@ -75,7 +79,9 @@ def post_execution_dialog() -> str:
             elif choice == "0":
                 return "exit"
             else:
-                console.print(f"[red]! Invalid choice '{choice}'. Please try again.[/red]")
+                console.print(
+                    f"[red]! Invalid choice '{choice}'. Please try again.[/red]"
+                )
         except (typer.Abort, KeyboardInterrupt, EOFError):
             return "exit"
 
@@ -88,17 +94,21 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
     # Determine if this is a multi-command group or a single command.
     # * In Typer ≥0.9 root apps with only one subcommand may be returned as
     #   TyperCommand (click.Command) without the ``commands`` attribute.
-    is_group = hasattr(click_cmd, "commands") and bool(getattr(click_cmd, "commands", {}))
+    is_group = hasattr(click_cmd, "commands") and bool(
+        getattr(click_cmd, "commands", {})
+    )
 
     should_continue = True
     while should_continue:
         console.clear()
-        console.print(f"\n[bold underline]Tool: {tool_app.info.name or tool_name}[/bold underline]")
+        console.print(
+            f"\n[bold underline]Tool: {tool_app.info.name or tool_name}[/bold underline]"
+        )
         if tool_app.info.help:
             console.print(f"  [dim]{tool_app.info.help}[/dim]")
 
         console.print("\n[bold]Available Commands:[/bold]")
-        
+
         # Build the list of available commands depending on whether we have a group.
         if is_group:
             commands = list(click_cmd.commands.values())  # type: ignore[attr-defined]
@@ -107,9 +117,15 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
             commands = [click_cmd]
 
         for i, command in enumerate(commands, 1):
-            help_text = getattr(command, "help", None) or tool_app.info.help or "No description."
+            help_text = (
+                getattr(command, "help", None)
+                or tool_app.info.help
+                or "No description."
+            )
             cmd_name = getattr(command, "name", tool_name)
-            console.print(f"  [green]{i:2d}[/green]. [bold]{cmd_name}[/bold] - {help_text}")
+            console.print(
+                f"  [green]{i:2d}[/green]. [bold]{cmd_name}[/bold] - {help_text}"
+            )
 
         console.print("\n  [bold]0[/bold]. Back to Main Menu")
 
@@ -121,11 +137,13 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
             choice_idx = int(choice)
             if 1 <= choice_idx <= len(commands):
                 selected_command = commands[choice_idx - 1]
-                
+
                 # --- EXECUTION LOGIC ---
                 console.clear()
                 launch_cmd_name = getattr(selected_command, "name", tool_name)
-                console.print(f"\n> Launching command: [bold cyan]{tool_name} {launch_cmd_name}[/bold cyan]")
+                console.print(
+                    f"\n> Launching command: [bold cyan]{tool_name} {launch_cmd_name}[/bold cyan]"
+                )
                 console.print("-" * 40)
                 try:
                     # Invoke the selected command. For single-command apps invoke without subcommand name.
@@ -136,22 +154,28 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
                 except SystemExit as e:
                     # A non-zero exit code usually indicates an error or user cancellation.
                     if e.code is not None and e.code != 0:
-                        console.print(f"[yellow]! Command exited with code {e.code}.[/yellow]")
+                        console.print(
+                            f"[yellow]! Command exited with code {e.code}.[/yellow]"
+                        )
                 except Exception as e:
-                    console.print(f"[bold red]! An unexpected error occurred while running command '{launch_cmd_name}':[/bold red]")
+                    console.print(
+                        f"[bold red]! An unexpected error occurred while running command '{launch_cmd_name}':[/bold red]"
+                    )
                     console.print(e)
 
                 console.print("-" * 40)
-                
+
                 next_action = post_execution_dialog()
                 if next_action == "exit":
                     # Propagate the exit signal up
-                    return "exit" 
+                    return "exit"
                 elif next_action == "main_menu":
-                    should_continue = False # Will exit the loop and return to main()
+                    should_continue = False  # Will exit the loop and return to main()
                 # if 'tool_menu', just continue the loop
             else:
-                console.print(f"[red]! Invalid choice '{choice}'. Please try again.[/red]")
+                console.print(
+                    f"[red]! Invalid choice '{choice}'. Please try again.[/red]"
+                )
                 time.sleep(1.5)
 
         except ValueError:
@@ -169,9 +193,13 @@ def main():
 
     if not command_plugins:
         console.print("[yellow]! Warning: No LittleTools plugins found.[/yellow]")
-        console.print("  This usually means you haven't installed any tool packages yet.")
+        console.print(
+            "  This usually means you haven't installed any tool packages yet."
+        )
         console.print("  Run the 'start.ps1' script to install all tools,")
-        console.print("  or install one manually (e.g., 'pip install ./littletools-video').")
+        console.print(
+            "  or install one manually (e.g., 'pip install ./littletools-video')."
+        )
         return
 
     while True:
@@ -182,7 +210,9 @@ def main():
         tool_names = list(command_plugins.keys())
         for i, name in enumerate(tool_names, 1):
             help_text = command_plugins[name].info.help or "No description available."
-            console.print(f"  [green]{i:2d}[/green]. [bold]{name.capitalize()}[/bold] - {help_text}")
+            console.print(
+                f"  [green]{i:2d}[/green]. [bold]{name.capitalize()}[/bold] - {help_text}"
+            )
 
         console.print("\n  [bold]0[/bold]. Exit")
 
@@ -200,7 +230,9 @@ def main():
                 if show_tool_menu(selected_name, selected_app) == "exit":
                     break
             else:
-                console.print(f"[red]! Invalid choice '{choice}'. Please try again.[/red]")
+                console.print(
+                    f"[red]! Invalid choice '{choice}'. Please try again.[/red]"
+                )
                 time.sleep(1.5)
 
         except ValueError:
@@ -212,4 +244,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main() 
+    main()

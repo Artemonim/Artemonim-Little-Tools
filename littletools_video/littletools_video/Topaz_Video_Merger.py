@@ -15,11 +15,16 @@ import typer
 from rich.console import Console
 from typing_extensions import Annotated
 
-from littletools_core.utils import (ensure_dir_exists, get_platform_info,
-                                   setup_signal_handler)
-from littletools_video.ffmpeg_utils import (ProcessingStats,
-                                            get_video_duration,
-                                            run_ffmpeg_command)
+from littletools_core.utils import (
+    ensure_dir_exists,
+    get_platform_info,
+    setup_signal_handler,
+)
+from littletools_video.ffmpeg_utils import (
+    ProcessingStats,
+    get_video_duration,
+    run_ffmpeg_command,
+)
 
 app = typer.Typer(
     name="topaz-merger",
@@ -34,25 +39,36 @@ OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
 async def merge_files(primary_input: Path, video_input: Path, output_path: Path):
     """Asynchronously merges the video and audio/subtitle streams."""
     stats = ProcessingStats()
-    
+
     cmd = [
-        "ffmpeg", "-y",
-        "-i", str(primary_input),
-        "-i", str(video_input),
-        "-map", "1:v:0",
-        "-map", "0:a?",
-        "-map", "0:s?",
-        "-c", "copy",
-        str(output_path)
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(primary_input),
+        "-i",
+        str(video_input),
+        "-map",
+        "1:v:0",
+        "-map",
+        "0:a?",
+        "-map",
+        "0:s?",
+        "-c",
+        "copy",
+        str(output_path),
     ]
-    
+
     console.print("[*] Starting merge process with FFmpeg...")
     total_duration = await get_video_duration(str(video_input))
-    
+
     success = await run_ffmpeg_command(
-        cmd, stats, quiet=True, output_path=str(output_path), total_duration=total_duration
+        cmd,
+        stats,
+        quiet=True,
+        output_path=str(output_path),
+        total_duration=total_duration,
     )
-    
+
     if success:
         console.print(f"[green]✓ Merge successful![/green] Output: {output_path.name}")
     else:
@@ -62,9 +78,22 @@ async def merge_files(primary_input: Path, video_input: Path, output_path: Path)
 
 @app.command()
 def run(
-    primary_input: Annotated[Path, typer.Option("--primary", "-i1", help="Path to the original file (with audio/subtitles).")],
-    video_input: Annotated[Path, typer.Option("--video", "-i2", help="Path to the Topaz-processed video-only file.")],
-    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for the merged file.")] = OUTPUT_DIR,
+    primary_input: Annotated[
+        Path,
+        typer.Option(
+            "--primary", "-i1", help="Path to the original file (with audio/subtitles)."
+        ),
+    ],
+    video_input: Annotated[
+        Path,
+        typer.Option(
+            "--video", "-i2", help="Path to the Topaz-processed video-only file."
+        ),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output directory for the merged file."),
+    ] = OUTPUT_DIR,
 ):
     """
     Merges a video-only file with the audio and subtitle tracks from a primary source file.
@@ -78,7 +107,7 @@ def run(
 
     ensure_dir_exists(output_dir)
     output_path = output_dir / f"{video_input.stem}_merged.mkv"
-    
+
     console.print(f"[*] Primary (Audio/Subs) Source: {primary_input.name}")
     console.print(f"[*] Video Source: {video_input.name}")
     console.print(f"[*] Output File: {output_path.name}")

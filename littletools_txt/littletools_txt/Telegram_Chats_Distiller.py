@@ -31,21 +31,25 @@ OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
 def process_chat_file(input_file: Path, output_file: Path):
     """Reads a Telegram JSON export and writes a distilled version."""
     try:
-        with input_file.open('r', encoding='utf-8') as f:
+        with input_file.open("r", encoding="utf-8") as f:
             data = json.load(f)
 
         distilled_messages = []
-        for message in data.get('messages', []):
-            if message.get('type') == 'message' and isinstance(message.get('text'), str):
-                distilled_messages.append({
-                    'id': message.get('id'),
-                    'from': message.get('from'),
-                    'from_id': message.get('from_id'),
-                    'date': message.get('date'),
-                    'text': message.get('text')
-                })
+        for message in data.get("messages", []):
+            if message.get("type") == "message" and isinstance(
+                message.get("text"), str
+            ):
+                distilled_messages.append(
+                    {
+                        "id": message.get("id"),
+                        "from": message.get("from"),
+                        "from_id": message.get("from_id"),
+                        "date": message.get("date"),
+                        "text": message.get("text"),
+                    }
+                )
 
-        with output_file.open('w', encoding='utf-8') as f:
+        with output_file.open("w", encoding="utf-8") as f:
             json.dump(distilled_messages, f, ensure_ascii=False, indent=2)
 
         return True
@@ -56,8 +60,17 @@ def process_chat_file(input_file: Path, output_file: Path):
 
 @app.command()
 def run(
-    input_file: Annotated[Path, typer.Option("--input", "-i", help="Input Telegram JSON file.")],
-    output_file: Annotated[Optional[Path], typer.Option("--output", "-o", help="Output file for the distilled JSON. [default: <input_stem>_distilled.json]")] = None,
+    input_file: Annotated[
+        Path, typer.Option("--input", "-i", help="Input Telegram JSON file.")
+    ],
+    output_file: Annotated[
+        Optional[Path],
+        typer.Option(
+            "--output",
+            "-o",
+            help="Output file for the distilled JSON. [default: <input_stem>_distilled.json]",
+        ),
+    ] = None,
 ):
     """
     Distills a Telegram chat export JSON file, keeping only essential message data.
@@ -74,7 +87,9 @@ def run(
 
     console.print(f"[*] Distilling '{input_file.name}'...")
     if process_chat_file(input_file, output_file):
-        console.print(f"[green]✓ Successfully distilled chat to '{output_file}'[/green]")
+        console.print(
+            f"[green]✓ Successfully distilled chat to '{output_file}'[/green]"
+        )
     else:
         console.print(f"[red]! Failed to distill chat file.[/red]")
         raise typer.Exit(code=1)

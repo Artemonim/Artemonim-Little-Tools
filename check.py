@@ -3,25 +3,32 @@
 """
 LittleTools Code Quality Checker
 
-This script runs comprehensive code quality checks on the LittleTools project.
-It combines multiple linting tools to provide a complete analysis of code quality,
-type safety, and style compliance.
+Автоматизированная проверка качества кода для всего проекта LittleTools.
 
-Usage:
-    python check.py [--fix] [--tool TOOL] [--verbose] [--json]
-    
-Tools used:
-    - Pyright: Static type checking and comprehensive analysis
-    - Flake8: Style guide enforcement and error detection  
-    - MyPy: Additional type checking
-    - Black: Code formatting check
-    - isort: Import sorting check
+- Всегда выполняет автофиксы форматирования (black, isort) перед анализом.
+- Использует отдельные конфиги линтеров из папки .linting/
+- Поддерживает проверку как всего проекта, так и отдельных файлов/директорий.
+- Подходит для локальной разработки и CI/CD (через --json).
 
-Options:
-    --fix: Automatically fix issues where possible (black, isort)
-    --tool: Run only specific tool (pyright, flake8, mypy, black, isort)
-    --verbose: Show detailed output
-    --json: Output results in JSON format for CI/CD integration
+Инструменты:
+    - Pyright: статический анализ типов (TypeScript-подобный)
+    - Flake8: стиль и синтаксис Python
+    - MyPy: строгая проверка типов
+    - Black: автоформатирование Python-кода
+    - isort: автоупорядочивание импортов
+
+Примеры запуска:
+    python check.py                                    # Проверить весь проект с автофиксом
+    python check.py --path myfile.py                   # Проверить только myfile.py
+    python check.py --path src/ tests/                 # Проверить только указанные директории
+    python check.py --tool black --path myfile.py      # Проверить/отформатировать только myfile.py black'ом
+    python check.py --json                             # Вывод в JSON для CI/CD
+
+Опции:
+    --tool: Запустить только указанный инструмент (pyright, flake8, mypy, black, isort)
+    --path: Проверить только указанные файлы/директории
+    --verbose: Подробный вывод
+    --json: Вывод в JSON для CI/CD
 """
 
 import argparse
@@ -39,37 +46,42 @@ TOOLS_CONFIG = {
         "args": [".", "--outputjson"],
         "description": "Static type checking and analysis",
         "can_fix": False,
-        "critical": True
+        "critical": True,
+        "supports_single_files": True  # now supports isolated file checks
     },
     "flake8": {
-        "command": ["python", "-m", "flake8"],
-        "args": ["--config=setup.cfg"],
+        "command": [sys.executable, "-m", "flake8"],
+        "args": ["--config=.linting/flake8.cfg"],
         "description": "Style guide enforcement and error detection",
         "can_fix": False,
-        "critical": True
+        "critical": True,
+        "supports_single_files": True
     },
     "mypy": {
-        "command": ["python", "-m", "mypy"],
-        "args": ["--config-file=setup.cfg"],
+        "command": [sys.executable, "-m", "mypy"],
+        "args": ["--config-file=.linting/mypy.ini"],
         "description": "Advanced type checking",
         "can_fix": False,
-        "critical": True
+        "critical": True,
+        "supports_single_files": True
     },
     "black": {
-        "command": ["python", "-m", "black"],
-        "args": ["--check", "--diff", "--config=pyproject.toml"],
-        "args_fix": ["--config=pyproject.toml"],
+        "command": [sys.executable, "-m", "black"],
+        "args": ["--check", "--diff", "--config=.linting/black.toml"],
+        "args_fix": ["--config=.linting/black.toml"],
         "description": "Code formatting check",
         "can_fix": True,
-        "critical": False
+        "critical": False,
+        "supports_single_files": True
     },
     "isort": {
-        "command": ["python", "-m", "isort"],
-        "args": ["--check-only", "--diff", "--settings-path=setup.cfg"],
-        "args_fix": ["--settings-path=setup.cfg"],
+        "command": [sys.executable, "-m", "isort"],
+        "args": ["--check-only", "--diff", "--settings-path=.linting/isort.cfg"],
+        "args_fix": ["--settings-path=.linting/isort.cfg"],
         "description": "Import sorting check",
         "can_fix": True,
-        "critical": False
+        "critical": False,
+        "supports_single_files": True
     }
 }
 
@@ -86,11 +98,23 @@ TARGET_DIRS = [
 class CodeQualityChecker:
     """Main class for running code quality checks."""
     
-    def __init__(self, verbose: bool = False, json_output: bool = False):
-        self.verbose = verbose
-        self.json_output = json_output
+    def __init__(self, verbose: bool = False, json_output: bool = False, target_paths: Optional[List[str]] = None):
+        super().__init__()  # * Ensure parent __init__ is called (for static checkers)
+        self.verbose: bool = verbose
+        self.json_output: bool = json_output
+        
+        # * Set target paths and validate Python files
+        if target_paths:
+            self.target_paths = self._validate_python_paths(target_paths)
+            if not self.target_paths:
+                if not json_output:
+                    self.print_status("No valid Python files or directories found in specified paths", "error")
+                raise ValueError("No valid Python files found")
+        else:
+            self.target_paths = TARGET_DIRS
+            
         self.results: Dict[str, Any] = {}
-        self.start_time = time.time()
+        self.start_time: float = time.time()
         
     def print_status(self, message: str, level: str = "info") -> None:
         """Print status message with appropriate formatting."""
@@ -116,6 +140,28 @@ class CodeQualityChecker:
             print(f"\n{'═' * 20} {title} {'═' * 20}")
         else:
             print("═" * 60)
+    
+    def _validate_python_paths(self, paths: List[str]) -> List[str]:
+        """Filter paths to include only Python files and directories containing Python files."""
+        valid_paths: List[str] = []
+        for path in paths:
+            if os.path.isfile(path):
+                if path.endswith('.py'):
+                    valid_paths.append(path)
+                elif self.verbose:
+                    self.print_status(f"Skipping non-Python file: {path}", "warning")
+            elif os.path.isdir(path):
+                has_python_files = False
+                for root, dirs, files in os.walk(path):
+                    # * Only check for .py files, do not use unused variables
+                    if any(f.endswith('.py') for f in files):
+                        has_python_files = True
+                        break
+                if has_python_files:
+                    valid_paths.append(path)
+                elif self.verbose:
+                    self.print_status(f"Directory contains no Python files: {path}", "warning")
+        return valid_paths
     
     def run_command(self, command: List[str], cwd: Optional[str] = None) -> Tuple[int, str, str]:
         """Run a shell command and return exit code, stdout, stderr."""
@@ -146,16 +192,25 @@ class CodeQualityChecker:
     
     def check_tool_availability(self, tool_name: str) -> bool:
         """Check if a tool is available."""
-        config = TOOLS_CONFIG[tool_name]
-        command = config["command"][:1] + ["--help"]  # Just check the main command
+        config: Dict[str, Any] = TOOLS_CONFIG[tool_name]
+        command_base = config["command"]
         
+        # * For Python modules, build the full command to check availability
+        if isinstance(command_base, list) and len(command_base) >= 2 and command_base[1] == "-m":
+            # * For sys.executable -m module commands, check with --version (more reliable than --help)
+            command = command_base + ["--version"]
+        elif isinstance(command_base, list):
+            # * For other commands (like npx), check the first command with --help
+            command = command_base[:1] + ["--help"]
+        else:
+            command = [str(command_base), "--help"]
+            
         exit_code, _, _ = self.run_command(command)
         return exit_code == 0
     
     def run_tool(self, tool_name: str, fix_mode: bool = False) -> Dict[str, Any]:
         """Run a specific linting tool."""
-        config = TOOLS_CONFIG[tool_name]
-        
+        config: Dict[str, Any] = TOOLS_CONFIG[tool_name]
         # * Check if tool is available
         if not self.check_tool_availability(tool_name):
             return {
@@ -164,23 +219,39 @@ class CodeQualityChecker:
                 "error": f"Tool {tool_name} is not available",
                 "exit_code": 127
             }
-        
         # * Build command
-        command: List[str] = config["command"].copy()
-        
+        command_base = config["command"]
+        command: List[str] = list(command_base) if isinstance(command_base, list) else [str(command_base)]
         if fix_mode and config["can_fix"]:
-            command.extend(config.get("args_fix", []))
-            command.extend(TARGET_DIRS)
+            args_fix = config.get("args_fix", [])
+            if isinstance(args_fix, list):
+                command.extend(args_fix)
+            elif isinstance(args_fix, str):
+                command.append(args_fix)
+            command.extend(self.target_paths)
         else:
-            command.extend(config.get("args", []))
-            if tool_name not in ["pyright"]:  # pyright analyzes the whole project
-                command.extend(TARGET_DIRS)
-        
+            args = config.get("args", [])
+            if isinstance(args, list):
+                command.extend(args)
+            elif isinstance(args, str):
+                command.append(args)
+            # * For pyright, check if we're using custom paths and it supports single files
+            if tool_name == "pyright":
+                if self.target_paths != TARGET_DIRS and not config["supports_single_files"]:
+                    # ! Warning: pyright needs project context, analyzing full project
+                    if self.verbose:
+                        self.print_status("Pyright requires project context, analyzing full project", "warning")
+                else:
+                    # * Remove default "." arg for custom paths
+                    if self.target_paths != TARGET_DIRS:
+                        command = [cmd for cmd in command if cmd != "."]
+                        command.extend(self.target_paths)
+            else:
+                command.extend(self.target_paths)
         # * Run the tool
         exit_code, stdout, stderr = self.run_command(command)
-        
         # * Parse results
-        result = {
+        result: Dict[str, Any] = {
             "tool": tool_name,
             "description": config["description"],
             "available": True,
@@ -191,7 +262,6 @@ class CodeQualityChecker:
             "can_fix": config["can_fix"],
             "fixed": fix_mode and config["can_fix"]
         }
-        
         # * Parse specific tool outputs
         if tool_name == "pyright" and stdout:
             try:
@@ -200,7 +270,6 @@ class CodeQualityChecker:
                 result["diagnostics"] = pyright_data.get("generalDiagnostics", [])
             except json.JSONDecodeError:
                 result["parse_error"] = "Failed to parse pyright JSON output"
-        
         return result
     
     def format_pyright_results(self, result: Dict[str, Any]) -> None:
@@ -266,9 +335,32 @@ class CodeQualityChecker:
         
         if not self.json_output:
             self.print_separator("LittleTools Code Quality Check")
-            self.print_status(f"Running checks on: {', '.join(TARGET_DIRS)}")
+            self.print_status(f"Running checks on: {', '.join(self.target_paths)}")
             if fix_mode:
                 self.print_status("Fix mode enabled - will attempt to fix issues automatically")
+            print()
+        
+        # * Auto-fix phase: run fixable tools first to clean up code
+        if not specific_tool:  # Only auto-fix when running all tools
+            fixable_tools = [tool for tool in tools_to_run if TOOLS_CONFIG[tool].get("can_fix", False)]
+            if fixable_tools and not self.json_output:
+                self.print_separator("AUTO-FIX PHASE")
+                self.print_status("Running automatic fixes with black and isort...")
+                
+            for tool_name in fixable_tools:
+                if not self.json_output:
+                    self.print_status(f"Auto-fixing with {tool_name}...")
+                result = self.run_tool(tool_name, fix_mode=True)
+                if result["exit_code"] == 0 and not self.json_output:
+                    self.print_status(f"{tool_name}: Auto-fix completed", "success")
+                elif not self.json_output:
+                    self.print_status(f"{tool_name}: Auto-fix had issues", "warning")
+        
+        # * Analysis phase: run all tools for checking
+        if not self.json_output and not specific_tool:
+            print()
+            self.print_separator("ANALYSIS PHASE")
+            self.print_status("Running code quality analysis...")
             print()
         
         # * Run each tool
@@ -351,15 +443,15 @@ def main():
     )
     
     parser.add_argument(
-        "--fix",
-        action="store_true",
-        help="Automatically fix issues where possible (black, isort)"
-    )
-    
-    parser.add_argument(
         "--tool",
         choices=list(TOOLS_CONFIG.keys()),
         help="Run only specific tool"
+    )
+    
+    parser.add_argument(
+        "--path",
+        nargs="+",
+        help="Specific files or directories to check (default: all project modules)"
     )
     
     parser.add_argument(
@@ -376,11 +468,33 @@ def main():
     
     args = parser.parse_args()
     
+    # * Validate paths if provided
+    target_paths = None
+    if args.path:
+        target_paths = []
+        for path in args.path:
+            if os.path.exists(path):
+                target_paths.append(path)
+            else:
+                print(f"Error: Path '{path}' does not exist", file=sys.stderr)
+                sys.exit(1)
+                
+        if not target_paths:
+            print("Error: No valid paths specified", file=sys.stderr)
+            sys.exit(1)
+    
     # * Initialize checker
-    checker = CodeQualityChecker(verbose=args.verbose, json_output=args.json)
+    try:
+        checker = CodeQualityChecker(verbose=args.verbose, json_output=args.json, target_paths=target_paths)
+    except ValueError as e:
+        if not args.json:
+            print(f"Error: {e}", file=sys.stderr)
+        else:
+            print(json.dumps({"error": str(e)}, indent=2))
+        sys.exit(1)
     
     # * Run checks
-    results = checker.run_all_checks(specific_tool=args.tool, fix_mode=args.fix)
+    results = checker.run_all_checks(specific_tool=args.tool, fix_mode=True)
     
     # * Output results
     if args.json:

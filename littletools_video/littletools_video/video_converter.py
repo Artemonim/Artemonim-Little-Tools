@@ -19,22 +19,28 @@ import typer
 from rich.console import Console
 from typing_extensions import Annotated
 
-from littletools_core.utils import (BatchTimeEstimator, ensure_dir_exists,
-                                   format_duration, safe_delete,
-                                   setup_signal_handler,
-                                   prompt_for_interactive_settings)
-from littletools_video.ffmpeg_utils import (ProcessingStats,
-                                            get_video_duration,
-                                            get_video_resolution,
-                                            run_ffmpeg_command,
-                                            get_nvenc_video_options,
-                                            run_tasks_with_semaphore)
+from littletools_core.utils import (
+    BatchTimeEstimator,
+    ensure_dir_exists,
+    format_duration,
+    safe_delete,
+    setup_signal_handler,
+    prompt_for_interactive_settings,
+)
+from littletools_video.ffmpeg_utils import (
+    ProcessingStats,
+    get_video_duration,
+    get_video_resolution,
+    run_ffmpeg_command,
+    get_nvenc_video_options,
+    run_tasks_with_semaphore,
+)
 
 # * Create a Typer application for this specific tool
 app = typer.Typer(
     name="video-converter",
     help="Convert, transcode, and merge videos using FFmpeg (NVENC).",
-    no_args_is_help=True
+    no_args_is_help=True,
 )
 console = Console()
 
@@ -42,6 +48,7 @@ console = Console()
 # * The user can override these with CLI options.
 INPUT_DIR = Path.cwd() / "0-INPUT-0"
 OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
+
 
 async def _process_single_file_for_conversion(
     file_path: Path,
@@ -55,14 +62,16 @@ async def _process_single_file_for_conversion(
     stats: ProcessingStats,
     estimator: BatchTimeEstimator,
     position: int,
-    total: int
+    total: int,
 ):
     """Helper to process one file asynchronously."""
     output_filename = f"{file_path.stem}_converted.mp4"
     output_path = output_dir / output_filename
-    
+
     eta_str = estimator.get_eta_str()
-    console.print(f"[{position}/{total}] {file_path.name} (CQ: {quality}, FPS: {fps}, Res: {resolution}) | ETA: {eta_str}")
+    console.print(
+        f"[{position}/{total}] {file_path.name} (CQ: {quality}, FPS: {fps}, Res: {resolution}) | ETA: {eta_str}"
+    )
 
     if not overwrite and output_path.exists():
         stats.increment("skipped")
@@ -82,7 +91,9 @@ async def _process_single_file_for_conversion(
     # * If quality is 'Compressed' (40) AND no specific resolution was chosen,
     # * apply the legacy 720p scaling behavior.
     elif quality == "40":
-        filters.append("scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',flags=lanczos")
+        filters.append(
+            "scale='if(gt(iw,ih),-2,720)':'if(gt(iw,ih),720,-2)',flags=lanczos"
+        )
 
     if fps != "original":
         filters.append(f"fps={fps}")
@@ -95,9 +106,18 @@ async def _process_single_file_for_conversion(
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
 
-    audio_cmd = ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"] if normalize_audio else ["-c:a", "copy"]
+    audio_cmd = (
+        ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
+        if normalize_audio
+        else ["-c:a", "copy"]
+    )
 
-    cmd = ["ffmpeg", "-y", "-i", str(file_path)] + video_cmd + audio_cmd + [str(output_path)]
+    cmd = (
+        ["ffmpeg", "-y", "-i", str(file_path)]
+        + video_cmd
+        + audio_cmd
+        + [str(output_path)]
+    )
 
     success = await run_ffmpeg_command(
         cmd,
@@ -107,48 +127,78 @@ async def _process_single_file_for_conversion(
         file_position=position,
         file_count=total,
         filename=file_path.name,
-        total_duration=total_duration
+        total_duration=total_duration,
     )
     if success:
         console.print(f"  [green]✓ Success:[/green] {output_path.name}")
         if total_duration:
             estimator.update(total_duration)
     else:
-        console.print(f"  [red]✗ Failed:[/red] {file_path.name}. Check logs for details.")
+        console.print(
+            f"  [red]✗ Failed:[/red] {file_path.name}. Check logs for details."
+        )
         if output_path.exists():
             safe_delete(output_path)
 
 
 @app.command()
 def convert(
-    input_dir: Annotated[Path, typer.Option("--input", "-i", help="Input directory containing videos.")] = INPUT_DIR,
-    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for converted videos.")] = OUTPUT_DIR,
-    quality: Annotated[str, typer.Option(help="Encoding quality (CQ value). [26|30|34|40]")] = "26",
-    fps: Annotated[str, typer.Option(help="Target FPS. [original|30|60|120]")] = "original",
-    resolution: Annotated[str, typer.Option(help="Target resolution (scales down only). [original|480p|720p|1080p|2160p]")] = "original",
-    codec: Annotated[str, typer.Option(help="Video codec for encoding. [hevc|h264]")] = "hevc",
-    normalize_audio: Annotated[bool, typer.Option(help="Normalize audio to -16 LUFS.")] = False,
-    overwrite: Annotated[bool, typer.Option(help="Overwrite existing files in the output directory.")] = False,
-    concurrency: Annotated[int, typer.Option(help="Number of files to process concurrently.")] = 2,
+    input_dir: Annotated[
+        Path, typer.Option("--input", "-i", help="Input directory containing videos.")
+    ] = INPUT_DIR,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output directory for converted videos."),
+    ] = OUTPUT_DIR,
+    quality: Annotated[
+        str, typer.Option(help="Encoding quality (CQ value). [26|30|34|40]")
+    ] = "26",
+    fps: Annotated[
+        str, typer.Option(help="Target FPS. [original|30|60|120]")
+    ] = "original",
+    resolution: Annotated[
+        str,
+        typer.Option(
+            help="Target resolution (scales down only). [original|480p|720p|1080p|2160p]"
+        ),
+    ] = "original",
+    codec: Annotated[
+        str, typer.Option(help="Video codec for encoding. [hevc|h264]")
+    ] = "hevc",
+    normalize_audio: Annotated[
+        bool, typer.Option(help="Normalize audio to -16 LUFS.")
+    ] = False,
+    overwrite: Annotated[
+        bool, typer.Option(help="Overwrite existing files in the output directory.")
+    ] = False,
+    concurrency: Annotated[
+        int, typer.Option(help="Number of files to process concurrently.")
+    ] = 2,
 ):
     """
     Batch convert videos in a directory to HEVC (H.265) or H.264.
     """
-    console.print(f"[*] Starting batch conversion from '{input_dir}' to '{output_dir}'.")
+    console.print(
+        f"[*] Starting batch conversion from '{input_dir}' to '{output_dir}'."
+    )
     ensure_dir_exists(input_dir)
     ensure_dir_exists(output_dir)
 
     supported_extensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"]
-    files_to_process = [p for p in input_dir.iterdir() if p.suffix.lower() in supported_extensions]
+    files_to_process = [
+        p for p in input_dir.iterdir() if p.suffix.lower() in supported_extensions
+    ]
 
     if not files_to_process:
-        console.print("[yellow]! No supported video files found in the input directory.[/yellow]")
+        console.print(
+            "[yellow]! No supported video files found in the input directory.[/yellow]"
+        )
         raise typer.Exit()
 
     console.print(f"[*] Found {len(files_to_process)} video(s) to process.")
-    
+
     stats = ProcessingStats()
-    stats.stats['total'] = len(files_to_process)
+    stats.stats["total"] = len(files_to_process)
     estimator = BatchTimeEstimator()
     stop_event = asyncio.Event()
 
@@ -159,19 +209,32 @@ def convert(
             duration = await get_video_duration(str(file_path))
             if duration:
                 estimator.add_item(duration)
-        
+
         if estimator.total_workload > 0:
-            console.print(f"[*] Total video duration: {format_duration(estimator.total_workload)}")
-        
+            console.print(
+                f"[*] Total video duration: {format_duration(estimator.total_workload)}"
+            )
+
         estimator.start()
 
         tasks = [
             _process_single_file_for_conversion(
-                file, output_dir, quality, fps, resolution, normalize_audio, overwrite, codec,
-                stats, estimator, i + 1, len(files_to_process)
-            ) for i, file in enumerate(files_to_process)
+                file,
+                output_dir,
+                quality,
+                fps,
+                resolution,
+                normalize_audio,
+                overwrite,
+                codec,
+                stats,
+                estimator,
+                i + 1,
+                len(files_to_process),
+            )
+            for i, file in enumerate(files_to_process)
         ]
-        
+
         await run_tasks_with_semaphore(tasks, stats, stop_event, concurrency)
         return time.time() - start_time
 
@@ -179,9 +242,11 @@ def convert(
     try:
         total_elapsed_time = asyncio.run(main_async_logic())
     except KeyboardInterrupt:
-        console.print("\n[yellow]! User interrupted the process. Shutting down...[/yellow]")
+        console.print(
+            "\n[yellow]! User interrupted the process. Shutting down...[/yellow]"
+        )
         stop_event.set()
-    
+
     console.print("\n--- Conversion Summary ---")
     stats.print_summary(total_elapsed_time)
     console.print("[green]✓ Conversion process completed.[/green]")
@@ -193,27 +258,39 @@ def single():
     Convert a single video file or all supported files in a directory with interactive prompts for all options.
     """
     console.print("[*] Interactive single file or folder conversion.")
-    
+
     try:
         # --- Input File or Directory ---
         while True:
-            input_str = typer.prompt("Enter the path to the input video file or directory")
+            input_str = typer.prompt(
+                "Enter the path to the input video file or directory"
+            )
             input_path = Path(input_str.strip().strip('"'))
             if input_path.exists():
                 break
-            console.print(f"[red]! File or directory not found: {input_path}. Please try again.[/red]")
+            console.print(
+                f"[red]! File or directory not found: {input_path}. Please try again.[/red]"
+            )
 
         # --- Determine files to process ---
         supported_extensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"]
         if input_path.is_file():
             files_to_process = [input_path]
         elif input_path.is_dir():
-            files_to_process = [p for p in input_path.iterdir() if p.suffix.lower() in supported_extensions and p.is_file()]
+            files_to_process = [
+                p
+                for p in input_path.iterdir()
+                if p.suffix.lower() in supported_extensions and p.is_file()
+            ]
             if not files_to_process:
-                console.print("[yellow]! No supported video files found in the directory.[/yellow]")
+                console.print(
+                    "[yellow]! No supported video files found in the directory.[/yellow]"
+                )
                 raise typer.Exit()
         else:
-            console.print(f"[red]! Path is neither a file nor a directory: {input_path}.[/red]")
+            console.print(
+                f"[red]! Path is neither a file nor a directory: {input_path}.[/red]"
+            )
             raise typer.Exit()
 
         # --- Output File or Directory ---
@@ -221,14 +298,14 @@ def single():
             default_output_name = f"{files_to_process[0].stem}_converted.mp4"
             output_str = typer.prompt(
                 "Enter the output file path (or press Enter for default)",
-                default=str(OUTPUT_DIR / default_output_name)
+                default=str(OUTPUT_DIR / default_output_name),
             )
             output_file = Path(output_str.strip().strip('"'))
             ensure_dir_exists(output_file.parent)
         else:
             output_str = typer.prompt(
                 "Enter the output directory for converted files (or press Enter for default)",
-                default=str(OUTPUT_DIR)
+                default=str(OUTPUT_DIR),
             )
             output_file = None
             output_dir = Path(output_str.strip().strip('"'))
@@ -243,32 +320,51 @@ def single():
             "normalize_audio": False,
             "overwrite": False,
         }
-        
+
         settings_definitions = [
             {
-                "key": "quality", "label": "Quality", "type": "choice",
+                "key": "quality",
+                "label": "Quality",
+                "type": "choice",
                 "choices": {
-                    "Master (CQ=26)": "26", "Optimal (CQ=30)": "30",
-                    "Compact (CQ=34)": "34", "Compressed (CQ=40, <=720p)": "40"
-                }
+                    "Master (CQ=26)": "26",
+                    "Optimal (CQ=30)": "30",
+                    "Compact (CQ=34)": "34",
+                    "Compressed (CQ=40, <=720p)": "40",
+                },
             },
             {
-                "key": "fps", "label": "FPS", "type": "choice",
-                "choices": {"Original": "original", "30 FPS": "30", "60 FPS": "60", "120 FPS": "120"}
+                "key": "fps",
+                "label": "FPS",
+                "type": "choice",
+                "choices": {
+                    "Original": "original",
+                    "30 FPS": "30",
+                    "60 FPS": "60",
+                    "120 FPS": "120",
+                },
             },
             {
-                "key": "resolution", "label": "Resolution", "type": "choice",
-                "choices": {"Original": "original", "480p": "480p", "720p": "720p", "1080p": "1080p", "2160p (4K)": "2160p"}
+                "key": "resolution",
+                "label": "Resolution",
+                "type": "choice",
+                "choices": {
+                    "Original": "original",
+                    "480p": "480p",
+                    "720p": "720p",
+                    "1080p": "1080p",
+                    "2160p (4K)": "2160p",
+                },
             },
             {"key": "normalize_audio", "label": "Normalize Audio", "type": "toggle"},
             {"key": "overwrite", "label": "Overwrite Files", "type": "toggle"},
             {"key": "codec", "label": "Codec", "type": "toggle"},
         ]
-        
+
         final_settings = prompt_for_interactive_settings(
             settings_definitions=settings_definitions,
             current_settings=initial_settings,
-            title="Conversion Settings"
+            title="Conversion Settings",
         )
 
         if final_settings is None:
@@ -287,28 +383,34 @@ def single():
                     if output_file and total_files == 1:
                         out_dir = output_file.parent
                     else:
-                        out_dir = output_dir if output_file is None else output_file.parent
+                        out_dir = (
+                            output_dir if output_file is None else output_file.parent
+                        )
                     await _process_single_file_for_conversion(
                         file_path=file_path,
                         output_dir=out_dir,
-                        quality=final_settings['quality'],
-                        fps=final_settings['fps'],
-                        resolution=final_settings['resolution'],
-                        normalize_audio=final_settings['normalize_audio'],
-                        overwrite=final_settings['overwrite'],
-                        codec=final_settings['codec'],
+                        quality=final_settings["quality"],
+                        fps=final_settings["fps"],
+                        resolution=final_settings["resolution"],
+                        normalize_audio=final_settings["normalize_audio"],
+                        overwrite=final_settings["overwrite"],
+                        codec=final_settings["codec"],
                         stats=stats,
                         estimator=estimator,
                         position=idx,
-                        total=total_files
+                        total=total_files,
                     )
                     # If single file and custom output name, rename result
                     if output_file and total_files == 1:
-                        default_output = output_file.parent / f"{file_path.stem}_converted.mp4"
+                        default_output = (
+                            output_file.parent / f"{file_path.stem}_converted.mp4"
+                        )
                         if default_output.exists() and default_output != output_file:
                             shutil.move(str(default_output), str(output_file))
                 except Exception as e:
-                    console.print(f"[yellow]! Skipped file due to error: {file_path} ({e})[/yellow]")
+                    console.print(
+                        f"[yellow]! Skipped file due to error: {file_path} ({e})[/yellow]"
+                    )
                     stats.increment("skipped")
 
         asyncio.run(run_conversion())
@@ -318,7 +420,7 @@ def single():
 
     except typer.Abort:
         console.print("\n[yellow]! Operation cancelled by user.[/yellow]")
-    except (KeyboardInterrupt):
+    except KeyboardInterrupt:
         console.print("\n[yellow]! Operation cancelled by user.[/yellow]")
 
 
@@ -338,8 +440,10 @@ async def _convert_single_file_for_merge(
     """Helper to convert one file for merging."""
     converted_path = temp_dir / f"{position:03d}_{file_path.stem}_converted.mp4"
     eta_str = estimator.get_eta_str()
-    console.print(f"[{position}/{total}] Converting {file_path.name} for merge | ETA: {eta_str}")
-    
+    console.print(
+        f"[{position}/{total}] Converting {file_path.name} for merge | ETA: {eta_str}"
+    )
+
     total_duration = await get_video_duration(str(file_path))
 
     filters = []
@@ -353,7 +457,7 @@ async def _convert_single_file_for_merge(
 
     if fps != "original":
         filters.append(f"fps={fps}")
-        
+
     # * For H.264, force 8-bit pixel format to avoid errors with 10-bit sources on consumer GPUs.
     if codec == "h264":
         filters.append("format=yuv420p")
@@ -361,10 +465,19 @@ async def _convert_single_file_for_merge(
     video_cmd = get_nvenc_video_options(codec=codec, quality=quality)
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
-        
-    audio_cmd = ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"] if normalize_audio else ["-c:a", "copy"]
 
-    cmd = ["ffmpeg", "-y", "-i", str(file_path)] + video_cmd + audio_cmd + [str(converted_path)]
+    audio_cmd = (
+        ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
+        if normalize_audio
+        else ["-c:a", "copy"]
+    )
+
+    cmd = (
+        ["ffmpeg", "-y", "-i", str(file_path)]
+        + video_cmd
+        + audio_cmd
+        + [str(converted_path)]
+    )
 
     success = await run_ffmpeg_command(
         cmd,
@@ -382,20 +495,50 @@ async def _convert_single_file_for_merge(
         if total_duration:
             estimator.update(total_duration)
         return converted_path
-    
+
     console.print(f"  [red]✗ Conversion failed:[/red] {file_path.name}")
     return None
 
+
 @app.command()
 def merge(
-    inputs: Annotated[List[Path], typer.Option("--input", "-i", help="Input video file. Provide this option multiple times for each file in order.")],
-    output: Annotated[Path, typer.Option("--output", "-o", help="Output file path for the merged video.")],
-    quality: Annotated[str, typer.Option(help="Encoding quality for intermediate files. [26|30|34|40]")] = "26",
-    fps: Annotated[str, typer.Option(help="Target FPS for intermediate files. [original|30|60|120]")] = "original",
-    resolution: Annotated[str, typer.Option(help="Target resolution for intermediate files. [original|480p|720p|1080p|2160p]")] = "original",
-    codec: Annotated[str, typer.Option(help="Video codec for intermediate conversion. [hevc|h264]")] = "hevc",
-    normalize_audio: Annotated[bool, typer.Option(help="Normalize audio during intermediate conversion.")] = False,
-    cleanup: Annotated[bool, typer.Option("--cleanup-source", help="Delete source files upon successful merge.")] = False,
+    inputs: Annotated[
+        List[Path],
+        typer.Option(
+            "--input",
+            "-i",
+            help="Input video file. Provide this option multiple times for each file in order.",
+        ),
+    ],
+    output: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output file path for the merged video."),
+    ],
+    quality: Annotated[
+        str, typer.Option(help="Encoding quality for intermediate files. [26|30|34|40]")
+    ] = "26",
+    fps: Annotated[
+        str,
+        typer.Option(help="Target FPS for intermediate files. [original|30|60|120]"),
+    ] = "original",
+    resolution: Annotated[
+        str,
+        typer.Option(
+            help="Target resolution for intermediate files. [original|480p|720p|1080p|2160p]"
+        ),
+    ] = "original",
+    codec: Annotated[
+        str, typer.Option(help="Video codec for intermediate conversion. [hevc|h264]")
+    ] = "hevc",
+    normalize_audio: Annotated[
+        bool, typer.Option(help="Normalize audio during intermediate conversion.")
+    ] = False,
+    cleanup: Annotated[
+        bool,
+        typer.Option(
+            "--cleanup-source", help="Delete source files upon successful merge."
+        ),
+    ] = False,
 ):
     """
     Convert multiple videos (to HEVC/H.264) and merge them into one.
@@ -406,7 +549,7 @@ def merge(
 
     console.print(f"[*] Starting merge for {len(inputs)} video files.")
     ensure_dir_exists(output.parent)
-    
+
     temp_dir = output.parent / f"__merge_temp_{os.getpid()}__"
     ensure_dir_exists(temp_dir)
 
@@ -416,6 +559,7 @@ def merge(
     merge_success = False
 
     try:
+
         async def merge_async_logic():
             nonlocal converted_files
             console.print("[*] Calculating total duration for ETA...")
@@ -423,19 +567,32 @@ def merge(
                 duration = await get_video_duration(str(file_path))
                 if duration:
                     estimator.add_item(duration)
-            
+
             if estimator.total_workload > 0:
-                console.print(f"[*] Total video duration: {format_duration(estimator.total_workload)}")
-            
+                console.print(
+                    f"[*] Total video duration: {format_duration(estimator.total_workload)}"
+                )
+
             estimator.start()
 
             for i, file_path in enumerate(inputs):
                 result_path = await _convert_single_file_for_merge(
-                    file_path, temp_dir, quality, fps, resolution, normalize_audio, codec,
-                    stats, estimator, i + 1, len(inputs)
+                    file_path,
+                    temp_dir,
+                    quality,
+                    fps,
+                    resolution,
+                    normalize_audio,
+                    codec,
+                    stats,
+                    estimator,
+                    i + 1,
+                    len(inputs),
                 )
                 if not result_path:
-                    raise RuntimeError(f"Failed to convert {file_path.name}, aborting merge.")
+                    raise RuntimeError(
+                        f"Failed to convert {file_path.name}, aborting merge."
+                    )
                 converted_files.append(result_path)
 
             # Create concat list file
@@ -446,14 +603,23 @@ def merge(
 
             console.print("\n[*] Merging converted videos...")
             merge_cmd = [
-                "ffmpeg", "-y", "-f", "concat", "-safe", "0",
-                "-i", str(concat_list_path), "-c", "copy", str(output)
+                "ffmpeg",
+                "-y",
+                "-f",
+                "concat",
+                "-safe",
+                "0",
+                "-i",
+                str(concat_list_path),
+                "-c",
+                "copy",
+                str(output),
             ]
             process = subprocess.run(merge_cmd, capture_output=True, text=True)
-            
+
             if process.returncode == 0:
                 return True
-            
+
             console.print("[red]! Merge operation failed. FFmpeg output:[/red]")
             console.print(process.stderr)
             return False
@@ -482,12 +648,30 @@ def merge(
 
 @app.command()
 def compile(
-    inputs: Annotated[List[Path], typer.Option("--input", "-i", help="Input files. First is video source. Provide option multiple times.")],
-    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for the compiled file.")] = OUTPUT_DIR,
-    keep_original_audio: Annotated[bool, typer.Option(help="Keep audio from the primary video source file.")] = False,
-    keep_original_subtitles: Annotated[bool, typer.Option(help="Keep subtitles from the primary video source file.")] = False,
-    output_container: Annotated[str, typer.Option(help="Container for the output file. [mkv|mp4]")] = "mkv",
-    overwrite: Annotated[bool, typer.Option(help="Overwrite existing file in the output directory.")] = False,
+    inputs: Annotated[
+        List[Path],
+        typer.Option(
+            "--input",
+            "-i",
+            help="Input files. First is video source. Provide option multiple times.",
+        ),
+    ],
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output directory for the compiled file."),
+    ] = OUTPUT_DIR,
+    keep_original_audio: Annotated[
+        bool, typer.Option(help="Keep audio from the primary video source file.")
+    ] = False,
+    keep_original_subtitles: Annotated[
+        bool, typer.Option(help="Keep subtitles from the primary video source file.")
+    ] = False,
+    output_container: Annotated[
+        str, typer.Option(help="Container for the output file. [mkv|mp4]")
+    ] = "mkv",
+    overwrite: Annotated[
+        bool, typer.Option(help="Overwrite existing file in the output directory.")
+    ] = False,
 ):
     """
     Compile a video from multiple sources (video, audio, subtitles).
@@ -499,7 +683,7 @@ def compile(
     primary_input = inputs[0]
     output_filename = f"{primary_input.stem}_compiled.{output_container}"
     output_path = output_dir / output_filename
-    
+
     ensure_dir_exists(output_dir)
     console.print(f"[*] Compiling from '{primary_input.name}' to '{output_path.name}'.")
 
@@ -513,7 +697,7 @@ def compile(
         cmd.extend(["-i", str(file_path)])
 
     # --- Mapping ---
-    cmd.extend(["-map", "0:v:0?"]) # Map primary video stream, if it exists
+    cmd.extend(["-map", "0:v:0?"])  # Map primary video stream, if it exists
     if keep_original_audio:
         cmd.extend(["-map", "0:a?"])
     for i in range(1, len(inputs)):
@@ -522,19 +706,21 @@ def compile(
         cmd.extend(["-map", "0:s?"])
     for i in range(1, len(inputs)):
         cmd.extend(["-map", f"{i}:s?"])
-        
+
     # --- Codecs ---
-    if output_container == 'mp4':
-        console.print("[*] MP4 output selected. Subtitles will be converted to 'mov_text'.")
+    if output_container == "mp4":
+        console.print(
+            "[*] MP4 output selected. Subtitles will be converted to 'mov_text'."
+        )
         cmd.extend(["-c:v", "copy", "-c:a", "copy", "-c:s", "mov_text"])
     else:
         cmd.extend(["-c", "copy"])
-    
+
     cmd.append(str(output_path))
-    
+
     stats = ProcessingStats()
-    stats.stats['total'] = 1
-    
+    stats.stats["total"] = 1
+
     async def do_compile():
         total_duration = await get_video_duration(str(primary_input))
         success = await run_ffmpeg_command(
@@ -545,25 +731,33 @@ def compile(
             file_position=1,
             file_count=1,
             filename=output_filename,
-            total_duration=total_duration
+            total_duration=total_duration,
         )
         if success:
-            console.print(f"  [green]✓ Success:[/green] Compilation finished -> {output_path.name}")
+            console.print(
+                f"  [green]✓ Success:[/green] Compilation finished -> {output_path.name}"
+            )
         else:
-            console.print(f"  [red]✗ Failed:[/red] {primary_input.name}. Check FFmpeg output for details.")
-            console.print(f"  [yellow]! Tip:[/yellow] The '{output_container}' container might not support all codecs from the input files. Try 'mkv'.")
+            console.print(
+                f"  [red]✗ Failed:[/red] {primary_input.name}. Check FFmpeg output for details."
+            )
+            console.print(
+                f"  [yellow]! Tip:[/yellow] The '{output_container}' container might not support all codecs from the input files. Try 'mkv'."
+            )
             safe_delete(output_path)
 
     try:
         asyncio.run(do_compile())
     except Exception as e:
         stats.increment("errors")
-        console.print(f"  [red]✗ Exception while compiling {primary_input.name}: {e}[/red]")
+        console.print(
+            f"  [red]✗ Exception while compiling {primary_input.name}: {e}[/red]"
+        )
         safe_delete(output_path)
-    
+
     stats.print_summary(0)
 
 
 if __name__ == "__main__":
     setup_signal_handler()  # * For graceful Ctrl+C handling
-    app() 
+    app()

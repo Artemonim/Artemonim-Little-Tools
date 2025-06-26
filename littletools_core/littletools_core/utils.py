@@ -109,7 +109,9 @@ def ensure_dir_exists(dir_path: Union[str, Path]) -> bool:
         return False
 
 
-def get_files_by_extension(directory: Union[str, Path], extensions: List[str]) -> List[Path]:
+def get_files_by_extension(
+    directory: Union[str, Path], extensions: List[str]
+) -> List[Path]:
     """Return all files with specified extensions from a directory."""
     try:
         directory = Path(directory)
@@ -118,8 +120,8 @@ def get_files_by_extension(directory: Union[str, Path], extensions: List[str]) -
 
         files: List[Path] = []
         for ext in extensions:
-            if not ext.startswith('.'):
-                ext = '.' + ext
+            if not ext.startswith("."):
+                ext = "." + ext
             files.extend(directory.glob(f"*{ext.lower()}"))
             files.extend(directory.glob(f"*{ext.upper()}"))
 
@@ -129,7 +131,9 @@ def get_files_by_extension(directory: Union[str, Path], extensions: List[str]) -
         return []
 
 
-def check_file_exists_with_overwrite(output_path: Union[str, Path], overwrite: bool = False) -> bool:
+def check_file_exists_with_overwrite(
+    output_path: Union[str, Path], overwrite: bool = False
+) -> bool:
     """Check if output file exists and handle based on overwrite flag."""
     output_path = Path(output_path)
     if output_path.exists():
@@ -155,7 +159,9 @@ def clean_partial_output(output_path: Union[str, Path], max_attempts: int = 3) -
             if attempt < max_attempts - 1:
                 time.sleep(1)
             else:
-                print(f"! Failed to delete partial file after {max_attempts} attempts: {e}")
+                print(
+                    f"! Failed to delete partial file after {max_attempts} attempts: {e}"
+                )
     return False
 
 
@@ -164,7 +170,9 @@ def print_separator(char: str = "═", length: int = 50) -> None:
     print("\n" + char * length + "\n")
 
 
-def print_file_info(filename: str, current: int, total: int, extra_info: str = "") -> None:
+def print_file_info(
+    filename: str, current: int, total: int, extra_info: str = ""
+) -> None:
     """Print information about the file being processed."""
     extra = f" ({extra_info})" if extra_info else ""
     print(f"[{current}/{total}] {filename}{extra}")
@@ -185,7 +193,7 @@ def print_status(message: str, status_type: str = "info") -> None:
 def clear_screen_if_compact(is_compact: bool) -> None:
     """Clear the terminal screen if compact mode is enabled."""
     if is_compact:
-        os.system('cls' if platform.system() == "Windows" else 'clear')
+        os.system("cls" if platform.system() == "Windows" else "clear")
 
 
 def format_duration(seconds: float) -> str:
@@ -246,7 +254,9 @@ def prompt_for_path(
     """
     console = Console()
     while True:
-        path_str = typer.prompt(prompt_message, default=str(default) if default else None)
+        path_str = typer.prompt(
+            prompt_message, default=str(default) if default else None
+        )
         cleaned_path_str = path_str.strip().strip('"').strip("'")
         if not cleaned_path_str:
             console.print("[red]! Path cannot be empty.[/red]")
@@ -255,15 +265,21 @@ def prompt_for_path(
         resolved_path = Path(cleaned_path_str).resolve()
 
         if must_exist and not resolved_path.exists():
-            console.print(f"[red]! Path not found: '{resolved_path}'[/red]. Please try again.")
+            console.print(
+                f"[red]! Path not found: '{resolved_path}'[/red]. Please try again."
+            )
             continue
 
         if not file_okay and resolved_path.is_file():
-            console.print(f"[red]! Path must be a directory, not a file: '{resolved_path}'[/red].")
+            console.print(
+                f"[red]! Path must be a directory, not a file: '{resolved_path}'[/red]."
+            )
             continue
 
         if not dir_okay and resolved_path.is_dir():
-            console.print(f"[red]! Path must be a file, not a directory: '{resolved_path}'[/red].")
+            console.print(
+                f"[red]! Path must be a file, not a directory: '{resolved_path}'[/red]."
+            )
             continue
 
         return resolved_path
@@ -334,7 +350,7 @@ def get_default_io_paths(tool_slug: str = "") -> tuple[Path, Path]:
 def prompt_for_interactive_settings(
     settings_definitions: List[Dict[str, Any]],
     current_settings: Dict[str, Any],
-    title: str = "Settings"
+    title: str = "Settings",
 ) -> Optional[Dict[str, Any]]:
     """
     Displays a generic interactive menu for configuring a set of options.
@@ -379,7 +395,7 @@ def prompt_for_interactive_settings(
 
     def _prompt_for_choice(label: str, choices: dict, current_value: str) -> str:
         console.print(f"\n[bold]Select {label}[/bold]")
-        choice_map = {str(i+1): value for i, value in enumerate(choices.values())}
+        choice_map = {str(i + 1): value for i, value in enumerate(choices.values())}
         for i, (name, value) in enumerate(choices.items()):
             indicator = "[bold green]✓[/bold green]" if value == current_value else " "
             console.print(f"  {indicator} [green]{i+1}[/green]. {name}")
@@ -394,25 +410,30 @@ def prompt_for_interactive_settings(
             raw_input = typer.prompt("Your choice", default=default_idx_str)
             if raw_input in choice_map:
                 return choice_map[raw_input]
-            console.print(f"[red]Invalid choice. Please enter a number from 1 to {len(choices)}.[/red]")
+            console.print(
+                f"[red]Invalid choice. Please enter a number from 1 to {len(choices)}.[/red]"
+            )
 
     while True:
         console.clear()
         console.print(f"[bold underline]{title}[/bold underline]")
 
         for i, definition in enumerate(settings_definitions, 1):
-            key = definition['key']
-            label = definition['label']
-            setting_type = definition['type']
+            key = definition["key"]
+            label = definition["label"]
+            setting_type = definition["type"]
             current_value = current_settings[key]
-            
+
             display_value = ""
-            if setting_type == 'choice':
-                choices = definition['choices']
-                display_value = next((name for name, value in choices.items() if value == current_value), "N/A")
-            elif setting_type == 'toggle':
+            if setting_type == "choice":
+                choices = definition["choices"]
+                display_value = next(
+                    (name for name, value in choices.items() if value == current_value),
+                    "N/A",
+                )
+            elif setting_type == "toggle":
                 display_value = "On" if current_value else "Off"
-            
+
             # Special case for codec toggle to make it more explicit
             if key == "codec" and setting_type == "toggle":
                 display_value = f"[bold]{'H264' if current_settings['codec'] == 'h264' else 'HEVC'}[/bold] (Toggle)"
@@ -421,35 +442,43 @@ def prompt_for_interactive_settings(
 
         console.print("\n [bold green]S[/bold green]. Start")
         console.print(" [bold red]Q[/bold red]. Quit")
-        
-        choice = typer.prompt("\nSelect an option to change, or start/quit", default="S").lower()
 
-        if choice == 's':
+        choice = typer.prompt(
+            "\nSelect an option to change, or start/quit", default="S"
+        ).lower()
+
+        if choice == "s":
             return current_settings
-        elif choice == 'q':
+        elif choice == "q":
             return None
-        
+
         try:
             choice_idx = int(choice) - 1
             if 0 <= choice_idx < len(settings_definitions):
                 selected_def = settings_definitions[choice_idx]
-                key = selected_def['key']
-                setting_type = selected_def['type']
-                
-                if setting_type == 'choice':
+                key = selected_def["key"]
+                setting_type = selected_def["type"]
+
+                if setting_type == "choice":
                     current_settings[key] = _prompt_for_choice(
-                        selected_def['label'], selected_def['choices'], current_settings[key]
+                        selected_def["label"],
+                        selected_def["choices"],
+                        current_settings[key],
                     )
-                elif setting_type == 'toggle':
+                elif setting_type == "toggle":
                     current_settings[key] = not current_settings[key]
-                
+
                 # Special handling for codec toggle
                 if key == "codec" and setting_type == "toggle":
-                    current_settings[key] = "h264" if current_settings[key] == "hevc" else "hevc"
+                    current_settings[key] = (
+                        "h264" if current_settings[key] == "hevc" else "hevc"
+                    )
 
             else:
-                 console.print(f"[red]! Invalid choice '{choice}'. Please try again.[/red]")
-                 time.sleep(1.5)
+                console.print(
+                    f"[red]! Invalid choice '{choice}'. Please try again.[/red]"
+                )
+                time.sleep(1.5)
         except ValueError:
             console.print(f"[red]! Invalid input. Please enter a number or S/Q.[/red]")
             time.sleep(1.5)
@@ -477,4 +506,4 @@ __all__ = [
     "BatchTimeEstimator",
     "get_default_io_paths",
     "prompt_for_interactive_settings",
-] 
+]

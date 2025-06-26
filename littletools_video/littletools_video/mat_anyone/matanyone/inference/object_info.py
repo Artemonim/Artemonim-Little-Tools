@@ -2,6 +2,7 @@ class ObjectInfo:
     """
     Store meta information for an object
     """
+
     def __init__(self, id: int):
         self.id = id
         self.poke_count = 0  # count number of detections missed
@@ -21,4 +22,4 @@ class ObjectInfo:
         return self.id == other.id
 
     def __repr__(self):
-        return f'(ID: {self.id})'
+        return f"(ID: {self.id})"

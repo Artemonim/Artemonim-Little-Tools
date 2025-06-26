@@ -1,0 +1,33 @@
+[tool.black]
+# * Line length to match project standards
+line-length = 88
+# * Target Python versions
+target-version = ["py311"]
+# * Include specific file patterns
+include = '\.pyi?$'
+# * Exclude specific directories and files
+extend-exclude = '''
+/(
+    # * Legacy files
+    legacy_.*\.py
+    | refactoring_.*\.py
+    # * Temporary and build directories
+    | temporary
+    | 0-INPUT-0
+    | 0-OUTPUT-0
+    | ben2_output
+    | tools
+    | \.eggs
+    | \.git
+    | \.mypy_cache
+    | \.venv
+    | _build
+    | buck-out
+    | build
+    | dist
+)/
+'''
+# * Skip string normalization to preserve existing style
+skip-string-normalization = false
+# * Preview features
+preview = false 

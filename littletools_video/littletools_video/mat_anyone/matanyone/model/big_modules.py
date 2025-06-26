@@ -2,7 +2,7 @@
 big_modules.py - This file stores higher-level network blocks.
 
 x - usually denotes features that are shared between objects.
-g - usually denotes features that are not shared between objects 
+g - usually denotes features that are not shared between objects
     with an extra "num_objects" dimension (batch_size * num_objects * num_channels * H * W).
 
 The trailing number of a variable usually denotes the stride
@@ -14,22 +14,50 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from matanyone.model.group_modules import MainToGroupDistributor, GroupFeatureFusionBlock, GConv2d
+from matanyone.model.group_modules import (
+    MainToGroupDistributor,
+    GroupFeatureFusionBlock,
+    GConv2d,
+)
 from matanyone.model.utils import resnet
-from matanyone.model.modules import SensoryDeepUpdater, SensoryUpdater_fullscale, DecoderFeatureProcessor, MaskUpsampleBlock
+from matanyone.model.modules import (
+    SensoryDeepUpdater,
+    SensoryUpdater_fullscale,
+    DecoderFeatureProcessor,
+    MaskUpsampleBlock,
+)
+
 
 class UncertPred(nn.Module):
     def __init__(self, model_cfg: DictConfig):
         super().__init__()
-        self.conv1x1_v2 = nn.Conv2d(model_cfg.pixel_dim*2 + 1 + model_cfg.value_dim, 64, kernel_size=1, stride=1, bias=False)
+        self.conv1x1_v2 = nn.Conv2d(
+            model_cfg.pixel_dim * 2 + 1 + model_cfg.value_dim,
+            64,
+            kernel_size=1,
+            stride=1,
+            bias=False,
+        )
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
-        self.conv3x3 = nn.Conv2d(64, 32, kernel_size=3, stride=1, padding=1, groups=1, bias=False, dilation=1)
+        self.conv3x3 = nn.Conv2d(
+            64, 32, kernel_size=3, stride=1, padding=1, groups=1, bias=False, dilation=1
+        )
         self.bn2 = nn.BatchNorm2d(32)
-        self.conv3x3_out = nn.Conv2d(32, 1, kernel_size=3, stride=1, padding=1, groups=1, bias=False, dilation=1)
-    
-    def forward(self, last_frame_feat: torch.Tensor, cur_frame_feat: torch.Tensor, last_mask: torch.Tensor, mem_val_diff:torch.Tensor):
-        last_mask = F.interpolate(last_mask, size=last_frame_feat.shape[-2:], mode='area')
+        self.conv3x3_out = nn.Conv2d(
+            32, 1, kernel_size=3, stride=1, padding=1, groups=1, bias=False, dilation=1
+        )
+
+    def forward(
+        self,
+        last_frame_feat: torch.Tensor,
+        cur_frame_feat: torch.Tensor,
+        last_mask: torch.Tensor,
+        mem_val_diff: torch.Tensor,
+    ):
+        last_mask = F.interpolate(
+            last_mask, size=last_frame_feat.shape[-2:], mode="area"
+        )
         x = torch.cat([last_frame_feat, cur_frame_feat, last_mask, mem_val_diff], dim=1)
         x = self.conv1x1_v2(x)
         x = self.bn1(x)
@@ -39,7 +67,7 @@ class UncertPred(nn.Module):
         x = self.relu(x)
         x = self.conv3x3_out(x)
         return x
-    
+
     # override the default train() to freeze BN statistics
     def train(self, mode=True):
         self.training = False
@@ -47,18 +75,19 @@ class UncertPred(nn.Module):
             module.train(False)
         return self
 
+
 class PixelEncoder(nn.Module):
     def __init__(self, model_cfg: DictConfig):
         super().__init__()
 
-        self.is_resnet = 'resnet' in model_cfg.pixel_encoder.type
+        self.is_resnet = "resnet" in model_cfg.pixel_encoder.type
         # if model_cfg.pretrained_resnet is set in the model_cfg we get the value
         # else default to True
-        is_pretrained_resnet = getattr(model_cfg,"pretrained_resnet",True)
+        is_pretrained_resnet = getattr(model_cfg, "pretrained_resnet", True)
         if self.is_resnet:
-            if model_cfg.pixel_encoder.type == 'resnet18':
+            if model_cfg.pixel_encoder.type == "resnet18":
                 network = resnet.resnet18(pretrained=is_pretrained_resnet)
-            elif model_cfg.pixel_encoder.type == 'resnet50':
+            elif model_cfg.pixel_encoder.type == "resnet50":
                 network = resnet.resnet50(pretrained=is_pretrained_resnet)
             else:
                 raise NotImplementedError
@@ -73,7 +102,9 @@ class PixelEncoder(nn.Module):
         else:
             raise NotImplementedError
 
-    def forward(self, x: torch.Tensor, seq_length=None) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def forward(
+        self, x: torch.Tensor, seq_length=None
+    ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
         f1 = x
         x = self.conv1(x)
         x = self.bn1(x)
@@ -111,10 +142,11 @@ class KeyProjection(nn.Module):
         nn.init.orthogonal_(self.key_proj.weight.data)
         nn.init.zeros_(self.key_proj.bias.data)
 
-    def forward(self, x: torch.Tensor, *, need_s: bool,
-                need_e: bool) -> (torch.Tensor, torch.Tensor, torch.Tensor):
+    def forward(
+        self, x: torch.Tensor, *, need_s: bool, need_e: bool
+    ) -> (torch.Tensor, torch.Tensor, torch.Tensor):
         x = self.pix_feat_proj(x)
-        shrinkage = self.d_proj(x)**2 + 1 if (need_s) else None
+        shrinkage = self.d_proj(x) ** 2 + 1 if (need_s) else None
         selection = torch.sigmoid(self.e_proj(x)) if (need_e) else None
 
         return self.key_proj(x), shrinkage, selection
@@ -133,11 +165,15 @@ class MaskEncoder(nn.Module):
 
         # if model_cfg.pretrained_resnet is set in the model_cfg we get the value
         # else default to True
-        is_pretrained_resnet = getattr(model_cfg,"pretrained_resnet",True)
-        if model_cfg.mask_encoder.type == 'resnet18':
-            network = resnet.resnet18(pretrained=is_pretrained_resnet, extra_dim=extra_dim)
-        elif model_cfg.mask_encoder.type == 'resnet50':
-            network = resnet.resnet50(pretrained=is_pretrained_resnet, extra_dim=extra_dim)
+        is_pretrained_resnet = getattr(model_cfg, "pretrained_resnet", True)
+        if model_cfg.mask_encoder.type == "resnet18":
+            network = resnet.resnet18(
+                pretrained=is_pretrained_resnet, extra_dim=extra_dim
+            )
+        elif model_cfg.mask_encoder.type == "resnet50":
+            network = resnet.resnet50(
+                pretrained=is_pretrained_resnet, extra_dim=extra_dim
+            )
         else:
             raise NotImplementedError
         self.conv1 = network.conv1
@@ -154,15 +190,17 @@ class MaskEncoder(nn.Module):
 
         self.sensory_update = SensoryDeepUpdater(value_dim, sensory_dim)
 
-    def forward(self,
-                image: torch.Tensor,
-                pix_feat: torch.Tensor,
-                sensory: torch.Tensor,
-                masks: torch.Tensor,
-                others: torch.Tensor,
-                *,
-                deep_update: bool = True,
-                chunk_size: int = -1) -> (torch.Tensor, torch.Tensor):
+    def forward(
+        self,
+        image: torch.Tensor,
+        pix_feat: torch.Tensor,
+        sensory: torch.Tensor,
+        masks: torch.Tensor,
+        others: torch.Tensor,
+        *,
+        deep_update: bool = True,
+        chunk_size: int = -1,
+    ) -> (torch.Tensor, torch.Tensor):
         # ms_features are from the key encoder
         # we only use the first one (lowest resolution), following XMem
         if self.single_object:
@@ -190,18 +228,18 @@ class MaskEncoder(nn.Module):
             if fast_path:
                 g_chunk = g
             else:
-                g_chunk = g[:, i:i + chunk_size]
+                g_chunk = g[:, i : i + chunk_size]
             actual_chunk_size = g_chunk.shape[1]
             g_chunk = g_chunk.flatten(start_dim=0, end_dim=1)
 
             g_chunk = self.conv1(g_chunk)
-            g_chunk = self.bn1(g_chunk)      # 1/2, 64
+            g_chunk = self.bn1(g_chunk)  # 1/2, 64
             g_chunk = self.maxpool(g_chunk)  # 1/4, 64
             g_chunk = self.relu(g_chunk)
 
-            g_chunk = self.layer1(g_chunk)   # 1/4
-            g_chunk = self.layer2(g_chunk)   # 1/8
-            g_chunk = self.layer3(g_chunk)   # 1/16
+            g_chunk = self.layer1(g_chunk)  # 1/4
+            g_chunk = self.layer2(g_chunk)  # 1/8
+            g_chunk = self.layer3(g_chunk)  # 1/16
 
             g_chunk = g_chunk.view(batch_size, actual_chunk_size, *g_chunk.shape[1:])
             g_chunk = self.fuser(pix_feat, g_chunk)
@@ -210,8 +248,9 @@ class MaskEncoder(nn.Module):
                 if fast_path:
                     new_sensory = self.sensory_update(g_chunk, sensory)
                 else:
-                    new_sensory[:, i:i + chunk_size] = self.sensory_update(
-                        g_chunk, sensory[:, i:i + chunk_size])
+                    new_sensory[:, i : i + chunk_size] = self.sensory_update(
+                        g_chunk, sensory[:, i : i + chunk_size]
+                    )
         g = torch.cat(all_g, dim=1)
 
         return g, new_sensory
@@ -239,14 +278,16 @@ class PixelFeatureFuser(nn.Module):
         else:
             self.sensory_compress = GConv2d(sensory_dim + 2, value_dim, kernel_size=1)
 
-    def forward(self,
-                pix_feat: torch.Tensor,
-                pixel_memory: torch.Tensor,
-                sensory_memory: torch.Tensor,
-                last_mask: torch.Tensor,
-                last_others: torch.Tensor,
-                *,
-                chunk_size: int = -1) -> torch.Tensor:
+    def forward(
+        self,
+        pix_feat: torch.Tensor,
+        pixel_memory: torch.Tensor,
+        sensory_memory: torch.Tensor,
+        last_mask: torch.Tensor,
+        last_others: torch.Tensor,
+        *,
+        chunk_size: int = -1,
+    ) -> torch.Tensor:
         batch_size, num_objects = pixel_memory.shape[:2]
 
         if self.single_object:
@@ -261,8 +302,15 @@ class PixelFeatureFuser(nn.Module):
         all_p16 = []
         for i in range(0, num_objects, chunk_size):
             sensory_readout = self.sensory_compress(
-                torch.cat([sensory_memory[:, i:i + chunk_size], last_mask[:, i:i + chunk_size]], 2))
-            p16 = pixel_memory[:, i:i + chunk_size] + sensory_readout
+                torch.cat(
+                    [
+                        sensory_memory[:, i : i + chunk_size],
+                        last_mask[:, i : i + chunk_size],
+                    ],
+                    2,
+                )
+            )
+            p16 = pixel_memory[:, i : i + chunk_size] + sensory_readout
             p16 = self.fuser(pix_feat, p16)
             all_p16.append(p16)
         p16 = torch.cat(all_p16, dim=1)
@@ -280,10 +328,15 @@ class MaskDecoder(nn.Module):
 
         assert embed_dim == up_dims[0]
 
-        self.sensory_update = SensoryUpdater_fullscale([up_dims[0], up_dims[1], up_dims[2], up_dims[3], up_dims[4] + 1], sensory_dim,
-                                             sensory_dim)
+        self.sensory_update = SensoryUpdater_fullscale(
+            [up_dims[0], up_dims[1], up_dims[2], up_dims[3], up_dims[4] + 1],
+            sensory_dim,
+            sensory_dim,
+        )
 
-        self.decoder_feat_proc = DecoderFeatureProcessor(ms_image_dims[1:], up_dims[:-1])
+        self.decoder_feat_proc = DecoderFeatureProcessor(
+            ms_image_dims[1:], up_dims[:-1]
+        )
         self.up_16_8 = MaskUpsampleBlock(up_dims[0], up_dims[1])
         self.up_8_4 = MaskUpsampleBlock(up_dims[1], up_dims[2])
         # newly add for alpha matte
@@ -293,16 +346,18 @@ class MaskDecoder(nn.Module):
         self.pred_seg = nn.Conv2d(up_dims[-1], 1, kernel_size=3, padding=1)
         self.pred_mat = nn.Conv2d(up_dims[-1], 1, kernel_size=3, padding=1)
 
-    def forward(self,
-                ms_image_feat: Iterable[torch.Tensor],
-                memory_readout: torch.Tensor,
-                sensory: torch.Tensor,
-                *,
-                chunk_size: int = -1,
-                update_sensory: bool = True,
-                seg_pass: bool = False,
-                last_mask=None,
-                sigmoid_residual=False) -> (torch.Tensor, torch.Tensor):
+    def forward(
+        self,
+        ms_image_feat: Iterable[torch.Tensor],
+        memory_readout: torch.Tensor,
+        sensory: torch.Tensor,
+        *,
+        chunk_size: int = -1,
+        update_sensory: bool = True,
+        seg_pass: bool = False,
+        last_mask=None,
+        sigmoid_residual=False,
+    ) -> (torch.Tensor, torch.Tensor):
 
         batch_size, num_objects = memory_readout.shape[:2]
         f8, f4, f2, f1 = self.decoder_feat_proc(ms_image_feat[1:])
@@ -323,41 +378,59 @@ class MaskDecoder(nn.Module):
             if fast_path:
                 p16 = memory_readout
             else:
-                p16 = memory_readout[:, i:i + chunk_size]
+                p16 = memory_readout[:, i : i + chunk_size]
             actual_chunk_size = p16.shape[1]
 
             p8 = self.up_16_8(p16, f8)
             p4 = self.up_8_4(p8, f4)
             p2 = self.up_4_2(p4, f2)
             p1 = self.up_2_1(p2, f1)
-            with torch.amp.autocast("cuda",enabled=False):
+            with torch.amp.autocast("cuda", enabled=False):
                 if seg_pass:
                     if last_mask is not None:
-                        res = self.pred_seg(F.relu(p1.flatten(start_dim=0, end_dim=1).float()))
+                        res = self.pred_seg(
+                            F.relu(p1.flatten(start_dim=0, end_dim=1).float())
+                        )
                         if sigmoid_residual:
-                            res = (torch.sigmoid(res) - 0.5) * 2  # regularization: (-1, 1) change on last mask
+                            res = (
+                                torch.sigmoid(res) - 0.5
+                            ) * 2  # regularization: (-1, 1) change on last mask
                         logits = last_mask + res
                     else:
-                        logits = self.pred_seg(F.relu(p1.flatten(start_dim=0, end_dim=1).float()))
+                        logits = self.pred_seg(
+                            F.relu(p1.flatten(start_dim=0, end_dim=1).float())
+                        )
                 else:
                     if last_mask is not None:
-                        res = self.pred_mat(F.relu(p1.flatten(start_dim=0, end_dim=1).float()))
+                        res = self.pred_mat(
+                            F.relu(p1.flatten(start_dim=0, end_dim=1).float())
+                        )
                         if sigmoid_residual:
-                            res = (torch.sigmoid(res) - 0.5) * 2  # regularization: (-1, 1) change on last mask
+                            res = (
+                                torch.sigmoid(res) - 0.5
+                            ) * 2  # regularization: (-1, 1) change on last mask
                         logits = last_mask + res
                     else:
-                        logits = self.pred_mat(F.relu(p1.flatten(start_dim=0, end_dim=1).float()))
+                        logits = self.pred_mat(
+                            F.relu(p1.flatten(start_dim=0, end_dim=1).float())
+                        )
             ## SensoryUpdater_fullscale
             if update_sensory:
                 p1 = torch.cat(
-                    [p1, logits.view(batch_size, actual_chunk_size, 1, *logits.shape[-2:])], 2)
+                    [
+                        p1,
+                        logits.view(
+                            batch_size, actual_chunk_size, 1, *logits.shape[-2:]
+                        ),
+                    ],
+                    2,
+                )
                 if fast_path:
                     new_sensory = self.sensory_update([p16, p8, p4, p2, p1], sensory)
                 else:
-                    new_sensory[:,
-                                i:i + chunk_size] = self.sensory_update([p16, p8, p4, p2, p1],
-                                                                        sensory[:,
-                                                                                i:i + chunk_size])
+                    new_sensory[:, i : i + chunk_size] = self.sensory_update(
+                        [p16, p8, p4, p2, p1], sensory[:, i : i + chunk_size]
+                    )
             all_logits.append(logits)
         logits = torch.cat(all_logits, dim=0)
         logits = logits.view(batch_size, num_objects, *logits.shape[-2:])

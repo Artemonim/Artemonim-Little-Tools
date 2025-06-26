@@ -20,6 +20,7 @@ if "HF_HOME" not in os.environ:
     project_root = Path(__file__).parent.parent.parent
     os.environ["HF_HOME"] = str(project_root / ".huggingface")
 
+
 def download_hf_model(
     repo_id: str,
     cache_dir: str = None,
@@ -40,15 +41,19 @@ def download_hf_model(
 
     Returns:
         The local path to the downloaded model directory.
-    
+
     Raises:
         Exception: If the download fails.
     """
     console.print(
         f"[*] Downloading model [cyan]'{repo_id}'[/cyan] from Hugging Face Hub..."
     )
-    console.print(f"[*] This may take a while depending on model size and your connection.")
-    console.print(f"[*] Files are cached locally in: [dim]{os.environ['HF_HOME']}[/dim]")
+    console.print(
+        f"[*] This may take a while depending on model size and your connection."
+    )
+    console.print(
+        f"[*] Files are cached locally in: [dim]{os.environ['HF_HOME']}[/dim]"
+    )
 
     try:
         model_path = snapshot_download(
@@ -65,4 +70,5 @@ def download_hf_model(
         console.print(f"[red]! Failed to download model '{repo_id}': {e}[/red]")
         raise
 
-__all__ = ["download_hf_model"] 
+
+__all__ = ["download_hf_model"]

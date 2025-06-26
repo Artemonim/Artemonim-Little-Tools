@@ -33,13 +33,16 @@ SUPPORTED_EXTENSIONS = [".txt"]
 
 # --- Core Processing Functions (from original script) ---
 
+
 def is_cyrillic(char: str) -> bool:
     """Check if a character is Cyrillic."""
-    return 'а' <= char.lower() <= 'я'
+    return "а" <= char.lower() <= "я"
+
 
 def remove_all_cyrillic(content: List[str]) -> str:
     """Mode 1: Remove all Cyrillic characters from the content."""
     return "".join(char for char in "".join(content) if not is_cyrillic(char))
+
 
 def remove_from_first_cyrillic(content: List[str]) -> str:
     """Mode 2: For each line, remove text from the first Cyrillic character onwards."""
@@ -53,6 +56,7 @@ def remove_from_first_cyrillic(content: List[str]) -> str:
             cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
+
 def remove_to_last_cyrillic(content: List[str]) -> str:
     """Mode 3: For each line, remove text up to the last Cyrillic character."""
     cleaned_lines = []
@@ -62,17 +66,13 @@ def remove_to_last_cyrillic(content: List[str]) -> str:
             if is_cyrillic(char):
                 last_cyrillic_pos = i
         if last_cyrillic_pos != -1:
-            cleaned_lines.append(line[last_cyrillic_pos + 1:])
+            cleaned_lines.append(line[last_cyrillic_pos + 1 :])
         else:
             cleaned_lines.append(line)
     return "\n".join(cleaned_lines)
 
-def process_file(
-    file_path: Path,
-    output_dir: Path,
-    mode: str,
-    overwrite: bool
-) -> str:
+
+def process_file(file_path: Path, output_dir: Path, mode: str, overwrite: bool) -> str:
     """
     Processes a single text file and returns a status ('processed', 'skipped', 'error').
     """
@@ -82,11 +82,13 @@ def process_file(
         return "skipped"
 
     try:
-        with file_path.open('r', encoding='utf-8') as f:
+        with file_path.open("r", encoding="utf-8") as f:
             content = f.readlines()
 
         if not any(is_cyrillic(char) for line in content for char in line):
-            console.print(f"  -> Skipped (no Cyrillic characters found): {file_path.name}")
+            console.print(
+                f"  -> Skipped (no Cyrillic characters found): {file_path.name}"
+            )
             return "skipped"
 
         if mode == "1":
@@ -95,12 +97,12 @@ def process_file(
             cleaned_content = remove_from_first_cyrillic(content)
         elif mode == "3":
             cleaned_content = remove_to_last_cyrillic(content)
-        else: # Should not happen with Typer's choices
+        else:  # Should not happen with Typer's choices
             return "error"
 
-        with output_path.open('w', encoding='utf-8') as f:
+        with output_path.open("w", encoding="utf-8") as f:
             f.write(cleaned_content)
-        
+
         console.print(f"  -> [green]Processed:[/green] {output_path.name}")
         return "processed"
     except Exception as e:
@@ -110,10 +112,23 @@ def process_file(
 
 @app.command()
 def run(
-    input_dir: Annotated[Path, typer.Option("--input", "-i", help="Input directory containing text files.")] = INPUT_DIR,
-    output_dir: Annotated[Path, typer.Option("--output", "-o", help="Output directory for processed files.")] = OUTPUT_DIR,
-    mode: Annotated[str, typer.Option(help="Removal mode: '1' for all Cyrillic, '2' for part of line after first, '3' for part of line before last.")] = "1",
-    overwrite: Annotated[bool, typer.Option(help="Overwrite existing files in the output directory.")] = False,
+    input_dir: Annotated[
+        Path,
+        typer.Option("--input", "-i", help="Input directory containing text files."),
+    ] = INPUT_DIR,
+    output_dir: Annotated[
+        Path,
+        typer.Option("--output", "-o", help="Output directory for processed files."),
+    ] = OUTPUT_DIR,
+    mode: Annotated[
+        str,
+        typer.Option(
+            help="Removal mode: '1' for all Cyrillic, '2' for part of line after first, '3' for part of line before last."
+        ),
+    ] = "1",
+    overwrite: Annotated[
+        bool, typer.Option(help="Overwrite existing files in the output directory.")
+    ] = False,
 ):
     """
     Remove Cyrillic characters from all .txt files in a directory.
@@ -131,14 +146,14 @@ def run(
 
     total_files = len(files)
     console.print(f"[*] Found {total_files} file(s) to process.")
-    
+
     stats = {"processed": 0, "skipped": 0, "error": 0}
 
     for i, file_path in enumerate(files):
         console.print(f"[{i+1}/{total_files}] Processing {file_path.name}...")
         status = process_file(file_path, output_dir, mode, overwrite)
         stats[status] += 1
-    
+
     console.print("\n--- Summary ---")
     console.print(f"Total files: {total_files}")
     console.print(f"[green]Processed: {stats['processed']}[/green]")

@@ -28,9 +28,10 @@ app = typer.Typer(
     and generate a high-quality alpha matte, separating the foreground
     from the background.
     """,
-    no_args_is_help=True
+    no_args_is_help=True,
 )
 console = Console()
+
 
 @app.command()
 def launch():
@@ -44,21 +45,21 @@ def launch():
     # Change CWD for the Gradio app to load assets correctly
     original_cwd = os.getcwd()
     os.chdir(hugging_face_dir)
-    
+
     try:
         # Now that the path is set up, we can import the app
         from mat_anyone.hugging_face.app import demo
-        
+
         # The demo object from app.py is a Gradio Blocks instance
         # We launch it here with proper blocking to keep CLI control
         import signal
         import sys
         import atexit
-        
+
         def signal_handler(sig, frame):
             console.print("\n[yellow]! Server stopped by user.[/yellow]")
             cleanup_and_exit(demo)
-        
+
         def cleanup_and_exit(demo_instance):
             """Clean up and exit properly"""
             try:
@@ -66,41 +67,50 @@ def launch():
                 console.print("Gradio server closed.")
             except Exception as e:
                 console.print(f"[dim]Error closing Gradio: {e}[/dim]")
-            
+
             # Force cleanup of any remaining processes
             try:
                 import psutil
+
                 current_pid = os.getpid()
-                for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
+                for proc in psutil.process_iter(["pid", "name", "cmdline"]):
                     try:
-                        if proc.info['pid'] == current_pid:
+                        if proc.info["pid"] == current_pid:
                             continue
-                        if proc.info['name'] and 'python' in proc.info['name'].lower():
-                            cmdline = proc.info['cmdline']
-                            if cmdline and any('gradio' in str(arg).lower() or 'mat_anyone' in str(arg).lower() for arg in cmdline):
+                        if proc.info["name"] and "python" in proc.info["name"].lower():
+                            cmdline = proc.info["cmdline"]
+                            if cmdline and any(
+                                "gradio" in str(arg).lower()
+                                or "mat_anyone" in str(arg).lower()
+                                for arg in cmdline
+                            ):
                                 proc.terminate()
                                 try:
                                     proc.wait(timeout=2)
                                 except psutil.TimeoutExpired:
                                     proc.kill()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                    except (
+                        psutil.NoSuchProcess,
+                        psutil.AccessDenied,
+                        psutil.ZombieProcess,
+                    ):
                         pass
             except ImportError:
                 pass
-            
+
             os._exit(0)
-        
+
         signal.signal(signal.SIGINT, signal_handler)
         atexit.register(lambda: cleanup_and_exit(demo))
-        
+
         demo.launch(
-            inbrowser=True, 
-            share=False, 
+            inbrowser=True,
+            share=False,
             prevent_thread_lock=False,  # Allow proper CLI integration
             show_error=True,
-            quiet=False
+            quiet=False,
         )
-        
+
     except KeyboardInterrupt:
         console.print("\n[yellow]! Server stopped by user.[/yellow]")
         try:
@@ -110,13 +120,18 @@ def launch():
     except ImportError as e:
         console.print(f"[red]! Failed to import the Gradio application.[/red]")
         console.print(f"[dim]  Error: {e}[/dim]")
-        console.print(f"[dim]  Please ensure the MatAnyone files are correctly placed in '{package_dir}/mat_anyone'[/dim]")
+        console.print(
+            f"[dim]  Please ensure the MatAnyone files are correctly placed in '{package_dir}/mat_anyone'[/dim]"
+        )
     except Exception as e:
-        console.print(f"[red]! An unexpected error occurred while launching the UI: {e}[/red]")
+        console.print(
+            f"[red]! An unexpected error occurred while launching the UI: {e}[/red]"
+        )
     finally:
         # Restore CWD
         os.chdir(original_cwd)
         console.print("\n[bold]MatAnyone UI server has been shut down.[/bold]")
 
+
 if __name__ == "__main__":
-    app() 
+    app()

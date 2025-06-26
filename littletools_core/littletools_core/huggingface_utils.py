@@ -56,6 +56,9 @@ def download_hf_model(
     )
 
     try:
+        # * Default cache_dir to HF_HOME environment variable if not specified
+        if cache_dir is None:
+            cache_dir = os.environ.get("HF_HOME")
         model_path = snapshot_download(
             repo_id=repo_id,
             cache_dir=cache_dir,

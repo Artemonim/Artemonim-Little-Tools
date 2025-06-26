@@ -45,6 +45,7 @@ temp_videos/
 
 # Large model files (auto-downloaded)
 *.pth
+.huggingface/
 # Exclude pretrained_models but allow specific files (handled by local .gitignore)
 pretrained_models/*.pth
 

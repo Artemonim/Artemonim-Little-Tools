@@ -19,6 +19,12 @@ dependencies = [
     "Pillow>=9.5",
     "tqdm>=4.66.1",
     "opencv-python>=4.8",
+    # Stable Diffusion dependencies
+    "diffusers>=0.21.0",
+    "transformers>=4.21.0",
+    "torch>=2.0.0",
+    "accelerate>=0.20.0",
+    "realesrgan>=0.3.0",
     # MatAnyone dependencies
     "cython",
     "gitpython>=3.1",
@@ -54,12 +60,17 @@ dependencies = [
     "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
 ]
 
+[project.optional-dependencies]
+# Optional dependencies for improved performance and features
+xformers = ["xformers>=0.0.20"]
+
 [project.scripts]
 ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:main"
 topaz-merger = "littletools_video.Topaz_Video_Merger:main"
 video-converter = "littletools_video.video_converter:main"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:main"
 mat-anyone = "littletools_video.mat_anyone_launcher:app"
+video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 
 [project.entry-points."littletools.commands"]
 video-converter = "littletools_video.video_converter:app"
@@ -67,6 +78,7 @@ ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:app"
 topaz-merger = "littletools_video.Topaz_Video_Merger:app"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:app"
 mat-anyone = "littletools_video.mat_anyone_launcher:app"
+video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 
 [tool.setuptools.packages.find]
 where = ["."] 

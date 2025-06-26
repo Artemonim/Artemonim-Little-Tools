@@ -31,6 +31,7 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
         A dictionary mapping the command name to its loaded Typer application.
     """
     plugins = {}
+    failed_plugins = []  # Track failed plugins for debugging
     try:
         # In Python 3.10+, importlib.metadata.entry_points() returns a different
         # object, and the .get() method is replaced by .select().
@@ -48,10 +49,23 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
                 plugin_app = entry_point.load()
                 if isinstance(plugin_app, typer.Typer):
                     plugins[entry_point.name] = plugin_app
+                else:
+                    failed_plugins.append(f"'{entry_point.name}': Not a Typer app")
             except Exception as e:
-                console.print(
-                    f"[red]! Error loading plugin '{entry_point.name}': {e}[/red]"
-                )
+                failed_plugins.append(f"'{entry_point.name}': {type(e).__name__}: {str(e)}")
+                
+        # * Show failed plugins info if in debug mode or if plugins missing
+        if failed_plugins:
+            console.print(f"[yellow]! Debug: Failed to load {len(failed_plugins)} plugin(s):[/yellow]")
+            for failure in failed_plugins:
+                console.print(f"  - {failure}")
+            console.print("  Press any key to continue...")
+            try:
+                import msvcrt
+                msvcrt.getch()  # Windows
+            except ImportError:
+                input()  # Unix/Linux
+
     except Exception as e:
         console.print(f"[red]! Error discovering plugins: {e}[/red]")
     return plugins

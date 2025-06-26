@@ -16,6 +16,7 @@ Thumbs.db
 
 # Tool environments and setup files
 setup_config.json
+.pip-cache/
 
 # Downloaded files within tools
 TxtTools/*/media/
@@ -48,6 +49,10 @@ temp_videos/
 .huggingface/
 # Exclude pretrained_models but allow specific files (handled by local .gitignore)
 pretrained_models/*.pth
+
+# Torch compilation cache
+.torch_compile_cache/
+.torchinductor_cache/
 
 # Logs
 *.log

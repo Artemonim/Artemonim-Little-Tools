@@ -20,11 +20,18 @@ from littletools_core.utils import (
     ensure_dir_exists,
     format_duration,
     setup_signal_handler,
+    prompt_for_path,
+    run_tasks_with_semaphore,
 )
 from littletools_video.ffmpeg_utils import (
     ProcessingStats,
+    get_audio_tracks,
+    build_loudnorm_filter_complex,
+    get_metadata_options,
     run_ffmpeg_command,
-    run_tasks_with_semaphore,
+    setup_signal_handlers,
+    get_max_workers,
+    standard_main,
 )
 
 app = typer.Typer(
@@ -126,7 +133,7 @@ def run(
             process_file(f, output_dir, overwrite, stats, estimator, i + 1, len(files))
             for i, f in enumerate(files)
         ]
-        await run_tasks_with_semaphore(tasks, stats, stop_event, concurrency)
+        await run_tasks_with_semaphore(tasks, stop_event, concurrency)
 
     try:
         asyncio.run(main_async())

@@ -3,6 +3,22 @@
 # --- SCRIPT CONFIGURATION ---
 $VenvDir = ".venv"
 $RequiredPythonVersion = "3.11"
+$PipCacheDir = Join-Path $PSScriptRoot ".pip-cache"
+$HfCacheDir = Join-Path $PSScriptRoot ".huggingface"
+
+# --- ENVIRONMENT VARIABLES ---
+# Set cache directories to be inside the project folder
+$env:PIP_CACHE_DIR = $PipCacheDir
+$env:HF_HOME = $HfCacheDir
+Write-Host "* Caches will be stored in:" -ForegroundColor Gray
+Write-Host "  - Pip: $PipCacheDir" -ForegroundColor Gray
+Write-Host "  - Hugging Face: $HfCacheDir" -ForegroundColor Gray
+
+# --- GRACEFUL EXIT ON CTRL+C ---
+trap [System.Management.Automation.PipelineStoppedException] {
+    Write-Host "`n! Operation cancelled by user. Exiting gracefully." -ForegroundColor Yellow
+    exit 1
+}
 
 # --- HELPER FUNCTIONS ---
 
@@ -117,14 +133,14 @@ function Install-Environment {
             try {
                 $NvidiaOutput = & nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>$null
                 if ($LASTEXITCODE -eq 0 -and $NvidiaOutput) {
-                    Write-Host "  ✓ NVIDIA GPU detected. Installing PyTorch with CUDA 12.1 support..." -ForegroundColor Green
-                    # * Install PyTorch with CUDA 12.1 (widely compatible)
-                    & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+                    Write-Host "  ✓ NVIDIA GPU detected. Installing PyTorch with CUDA 12.1 and xformers..." -ForegroundColor Green
+                    # * Install PyTorch, its ecosystem, and xformers in a single command for proper dependency resolution.
+                    & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu121
                     if ($LASTEXITCODE -ne 0) { 
-                        Write-Host "  ! Failed to install CUDA PyTorch. Falling back to CPU version..." -ForegroundColor Yellow
+                        Write-Host "  ! Failed to install CUDA PyTorch with xformers. Falling back to CPU version..." -ForegroundColor Yellow
                         & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio
                     } else {
-                        Write-Host "  ✓ PyTorch with CUDA support installed successfully." -ForegroundColor Green
+                        Write-Host "  ✓ PyTorch with CUDA and xformers support installed successfully." -ForegroundColor Green
                     }
                 } else {
                     Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. Installing CPU-only PyTorch..." -ForegroundColor Yellow
@@ -197,14 +213,94 @@ function Launch-Menu {
     }
 }
 
+# --- CACHE MANAGEMENT FUNCTIONS ---
+
+function Confirm-Action {
+    param(
+        [string]$ActionMessage
+    )
+    Write-Host "`n! WARNING: $ActionMessage" -ForegroundColor Yellow
+    $confirm = Read-Host "  Are you sure you want to continue? This cannot be undone. (y/N)"
+    return $confirm.ToLower() -eq 'y'
+}
+
+function Clean-Directory {
+    param(
+        [string]$Path,
+        [string]$CacheName
+    )
+    if (Test-Path $Path) {
+        Write-Host "* Removing $CacheName cache at '$Path'..." -ForegroundColor Yellow
+        try {
+            Remove-Item -Path $Path -Recurse -Force -ErrorAction Stop
+            Write-Host "  ✓ $CacheName cache removed." -ForegroundColor Green
+        } catch {
+            Write-Host "! Error removing '$Path': $_" -ForegroundColor Red
+        }
+    } else {
+        Write-Host "* $CacheName cache not found at '$Path'." -ForegroundColor Gray
+    }
+}
+
+function Clean-PipCache {
+    if (Confirm-Action "This will remove the local Pip package cache and all Python build artifacts (*.egg-info, build/, dist/).") {
+        Clean-Directory -Path $PipCacheDir -CacheName "Pip"
+        
+        Write-Host "* Removing Python build artifacts..." -ForegroundColor Yellow
+        Get-ChildItem -Path $PSScriptRoot -Recurse -Directory -Filter "*.egg-info" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path $PSScriptRoot -Recurse -Directory -Filter "build" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Get-ChildItem -Path $PSScriptRoot -Recurse -Directory -Filter "dist" | Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Host "  ✓ Build artifacts removed." -ForegroundColor Green
+    } else {
+        Write-Host "  - Action cancelled." -ForegroundColor Gray
+    }
+}
+
+function Clean-HuggingFaceCache {
+    if (Confirm-Action "This will remove ALL downloaded Hugging Face models and datasets stored locally.") {
+        Clean-Directory -Path $HfCacheDir -CacheName "Hugging Face"
+    } else {
+        Write-Host "  - Action cancelled." -ForegroundColor Gray
+    }
+}
+
+function Show-CacheMenu {
+    while ($true) {
+        Clear-Host
+        Write-Host "`n--- Cache Management ---" -ForegroundColor Cyan
+        Write-Host " [1] Clean Python / Pip cache and build artifacts"
+        Write-Host " [2] Clean Hugging Face model cache"
+        Write-Host " [3] Clean ALL caches"
+        Write-Host " [0] Back to Main Menu"
+
+        $cache_choice = Read-Host "`nEnter your choice"
+        switch ($cache_choice) {
+            "1" { Clean-PipCache }
+            "2" { Clean-HuggingFaceCache }
+            "3" { 
+                # Ask for confirmation for each step
+                Clean-PipCache
+                Clean-HuggingFaceCache
+            }
+            "0" { return }
+            default { Write-Host "! Invalid choice." -ForegroundColor Red }
+        }
+        
+        Write-Host "`nPress any key to return to the cache menu..."
+        [System.Console]::ReadKey($true) | Out-Null
+    }
+}
+
 # --- MAIN MENU LOOP ---
 
 while ($true) {
+    Clear-Host
     Write-Host "`n=== LittleTools Setup & Launcher (Python $RequiredPythonVersion) ===" -ForegroundColor Cyan
     Write-Host " [1] Install or Update All Tools"
     Write-Host " [2] Force Reinstall All Tools (Clean Slate)"
     Write-Host " [3] Uninstall (Remove Environment)"
     Write-Host " [4] Launch LittleTools Menu"
+    Write-Host " [5] Cache Management"
     Write-Host " [0] Exit"
 
     $choice = Read-Host "`nEnter your choice"
@@ -214,6 +310,7 @@ while ($true) {
         "2" { Reinstall-Environment }
         "3" { Uninstall-Environment }
         "4" { Launch-Menu }
+        "5" { Show-CacheMenu }
         "0" { 
             Write-Host "Goodbye!"
             exit 0
@@ -227,5 +324,4 @@ while ($true) {
         Write-Host "`nPress any key to return to the menu..."
         [System.Console]::ReadKey($true) | Out-Null
     }
-    Clear-Host
 } 

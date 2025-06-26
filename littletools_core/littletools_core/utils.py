@@ -34,12 +34,15 @@ import send2trash  # * For safe file deletion to recycle bin
 import time
 import typer
 from rich.console import Console
+import asyncio
 
 # * Better Comments:
 # * Important
 # ! Warning
 # ? Question
 # TODO:
+
+console = Console() # Add console for run_tasks_with_semaphore
 
 # * Global variables for signal handling
 _interrupted = False
@@ -252,7 +255,6 @@ def prompt_for_path(
     Returns:
         A resolved pathlib.Path object.
     """
-    console = Console()
     while True:
         path_str = typer.prompt(
             prompt_message, default=str(default) if default else None
@@ -484,6 +486,53 @@ def prompt_for_interactive_settings(
             time.sleep(1.5)
 
 
+async def run_tasks_with_semaphore(
+    tasks: List, stop_event: asyncio.Event, concurrency: int
+):
+    """
+    Run tasks with a semaphore to limit concurrency.
+
+    Args:
+        tasks: A list of awaitable tasks to run.
+        stop_event: Event to signal task termination.
+        concurrency: The maximum number of tasks to run at once.
+    """
+    # * Force single-file processing for GPU tasks to avoid resource contention.
+    limit = concurrency
+    semaphore = asyncio.Semaphore(limit)
+
+    console.print(
+        f"[*] Concurrency limit set to {limit} to avoid GPU resource contention."
+    )
+
+    async def run_task(task):
+        # Wait for the stop event before starting a new task
+        if stop_event.is_set():
+            return
+
+        async with semaphore:
+            if not stop_event.is_set():
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass  # Task cancellation is expected on interrupt
+
+    # Create a future to await all tasks
+    all_tasks_future = asyncio.gather(*(run_task(task) for task in tasks))
+
+    try:
+        await all_tasks_future
+    except asyncio.CancelledError:
+        # This is expected if the main task is cancelled.
+        # Ensure all sub-tasks are also cancelled.
+        all_tasks_future.cancel()
+        await asyncio.sleep(0.1)  # Give a moment for cancellations to propagate
+    finally:
+        # Ensure the semaphore is released if main task is cancelled
+        # This is handled by context manager, but as a safeguard.
+        pass
+
+
 # * Export commonly used functions for easy importing
 __all__ = [
     "is_interrupted",
@@ -506,4 +555,5 @@ __all__ = [
     "BatchTimeEstimator",
     "get_default_io_paths",
     "prompt_for_interactive_settings",
+    "run_tasks_with_semaphore",
 ]

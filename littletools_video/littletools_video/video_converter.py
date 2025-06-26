@@ -26,6 +26,7 @@ from littletools_core.utils import (
     safe_delete,
     setup_signal_handler,
     prompt_for_interactive_settings,
+    run_tasks_with_semaphore,
 )
 from littletools_video.ffmpeg_utils import (
     ProcessingStats,
@@ -33,7 +34,6 @@ from littletools_video.ffmpeg_utils import (
     get_video_resolution,
     run_ffmpeg_command,
     get_nvenc_video_options,
-    run_tasks_with_semaphore,
 )
 
 # * Create a Typer application for this specific tool
@@ -235,7 +235,7 @@ def convert(
             for i, file in enumerate(files_to_process)
         ]
 
-        await run_tasks_with_semaphore(tasks, stats, stop_event, concurrency)
+        await run_tasks_with_semaphore(tasks, stop_event, concurrency)
         return time.time() - start_time
 
     total_elapsed_time = 0
@@ -301,6 +301,7 @@ def single():
                 default=str(OUTPUT_DIR / default_output_name),
             )
             output_file = Path(output_str.strip().strip('"'))
+            output_dir = output_file.parent  # Define output_dir for single file
             ensure_dir_exists(output_file.parent)
         else:
             output_str = typer.prompt(

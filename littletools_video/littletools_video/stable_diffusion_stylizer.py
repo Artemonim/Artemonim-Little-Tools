@@ -10,6 +10,7 @@ Optimized for 8GB VRAM with memory-efficient techniques.
 import asyncio
 import functools
 import tempfile
+import os
 from pathlib import Path
 from typing import Any, Optional, Tuple
 
@@ -18,8 +19,17 @@ from rich.console import Console
 from rich.progress import Progress, TaskID
 from typing_extensions import Annotated
 
+# * Suppress xformers FutureWarnings and import required modules for stderr redirection
+import warnings
+import contextlib
+warnings.filterwarnings("ignore", category=FutureWarning, module="xformers")
+
 from littletools_core.huggingface_utils import download_hf_model
-from littletools_core.utils import ensure_dir_exists, prompt_for_path
+from littletools_core.utils import (
+    ensure_dir_exists,
+    prompt_for_path,
+    prompt_for_interactive_settings,
+)
 
 # * Global configuration
 console = Console()
@@ -28,6 +38,30 @@ app = typer.Typer(
     help="Stylize videos using Stable Diffusion and upscale with Real-ESRGAN.",
     no_args_is_help=True,
 )
+
+# * Enable torch.compile() caching for better performance
+os.environ["TORCH_COMPILE_CACHE_DIR"] = os.path.join(os.getcwd(), ".torch_compile_cache")
+os.environ["TORCHINDUCTOR_CACHE_DIR"] = os.path.join(os.getcwd(), ".torchinductor_cache")
+
+# * Set torch matmul precision for better performance on Ampere+ GPUs
+try:
+    import torch
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision('high')
+except ImportError:
+    pass # torch not installed yet
+
+# * Global variable to store the master compiled pipeline
+_compiled_master_pipeline = None
+
+
+def clear_pipeline_cache():
+    """Clear the cached master pipeline to free memory."""
+    global _compiled_master_pipeline
+    if _compiled_master_pipeline is not None:
+        console.print("[*] Clearing cached master pipeline...")
+        _compiled_master_pipeline = None
+        console.print("[green]✓ Pipeline cache cleared[/green]")
 
 
 def get_resolution_dimensions(resolution: str) -> Tuple[int, int]:
@@ -51,7 +85,7 @@ def get_resolution_dimensions(resolution: str) -> Tuple[int, int]:
 
 
 async def extract_frames(
-    input_video: Path, frames_dir: Path, resolution: str = "480p"
+    input_video: Path, frames_dir: Path, resolution: str = "480p", test_mode: bool = False
 ) -> bool:
     """
     Extract frames from video at specified resolution.
@@ -60,6 +94,7 @@ async def extract_frames(
         input_video: Path to the input video file
         frames_dir: Directory to save extracted frames
         resolution: Target resolution for extraction
+        test_mode: If True, only process the first 2 seconds.
 
     Returns:
         True if successful, False otherwise
@@ -72,6 +107,8 @@ async def extract_frames(
         width, height = get_resolution_dimensions(resolution)
 
         console.print(f"[*] Extracting frames at {resolution} ({width}x{height})...")
+        if test_mode:
+            console.print("[yellow]! Test mode enabled: processing first 2 seconds only.[/yellow]")
 
         # * Build ffmpeg command for frame extraction
         ffmpeg_cmd = [
@@ -83,8 +120,13 @@ async def extract_frames(
             f"scale={width}:{height}:flags=lanczos",
             "-q:v",
             "2",  # High quality JPEG
-            str(frames_dir / "%06d.png"),
         ]
+
+        # * If in test mode, only extract first 2 seconds
+        if test_mode:
+            ffmpeg_cmd.extend(["-t", "2"])
+
+        ffmpeg_cmd.append(str(frames_dir / "%06d.png"))
 
         # * Run ffmpeg command
         proc = await asyncio.create_subprocess_exec(
@@ -107,31 +149,42 @@ async def extract_frames(
         return False
 
 
-def setup_stable_diffusion_pipeline(model_id: str, scheduler_name: str = "UniPC") -> Any:
+def setup_master_compiled_pipeline(model_id: str, scheduler_name: str = "UniPC") -> Any:
     """
-    Set up Stable Diffusion pipeline with memory optimizations for 8GB VRAM.
+    Set up and compile the master Stable Diffusion pipeline.
 
-    Args:
-        model_id: Hugging Face model ID or local path
-        scheduler_name: The name of the scheduler to use.
+    On CUDA: the pipeline is loaded directly on GPU with `.to('cuda')`. Attention slicing
+    and xformers memory-efficient attention are enabled for VRAM optimization.
+    
+    ! NOTE: `torch.compile()` and `enable_model_cpu_offload()` are disabled to prevent
+    ! platform-specific conflicts on Windows (e.g., Triton dependency for torch.compile).
 
-    Returns:
-        Configured StableDiffusionImg2ImgPipeline
+    This should be called once, then workers can clone from it.
     """
+    global _compiled_master_pipeline
+    
+    if _compiled_master_pipeline is not None:
+        console.print("[green]✓ Using cached compiled master pipeline[/green]")
+        return _compiled_master_pipeline
+
     try:
         # * Import torch here to check if CUDA is available
         import torch
-        from diffusers import (
-            StableDiffusionImg2ImgPipeline,
-            DDIMScheduler,
-            EulerAncestralDiscreteScheduler,
-            DPMSolverMultistepScheduler,
-            UniPCMultistepScheduler,
-        )
+        # * Suppress xformers/triton warnings during diffusers import
+        with open(os.devnull, 'w') as _f, contextlib.redirect_stderr(_f):
+            from diffusers import (
+                StableDiffusionImg2ImgPipeline,
+                DDIMScheduler,
+                EulerAncestralDiscreteScheduler,
+                DPMSolverMultistepScheduler,
+                UniPCMultistepScheduler,
+            )
 
-        console.print(
-            f"[*] Setting up Stable Diffusion pipeline with model: {model_id}"
-        )
+        console.print(f"[*] Setting up MASTER Stable Diffusion pipeline with model: {model_id}")
+
+        # * Ensure cache directories exist
+        os.makedirs(os.environ["TORCH_COMPILE_CACHE_DIR"], exist_ok=True)
+        os.makedirs(os.environ["TORCHINDUCTOR_CACHE_DIR"], exist_ok=True)
 
         # * Check if model_id is a local path or HF model ID
         if Path(model_id).exists():
@@ -147,34 +200,31 @@ def setup_stable_diffusion_pipeline(model_id: str, scheduler_name: str = "UniPC"
         console.print(f"[*] Using device: {device}")
 
         if device == "cuda":
-            pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                str(model_path),
-                torch_dtype=torch.float16,
-                use_safetensors=True,
-            ).to(device)
-
-            # * Enable memory-efficient attention for 8GB VRAM
+            # * Load pipeline on GPU while suppressing external warnings
+            with open(os.devnull, 'w') as _devnull, contextlib.redirect_stderr(_devnull):
+                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                    str(model_path),
+                    torch_dtype=torch.float16,
+                    use_safetensors=True,
+                ).to("cuda")
+            # * Enable attention slicing for VRAM optimization
             pipeline.enable_attention_slicing()
-
-            # * Try to enable xformers if available
+            console.print("[*] GPU attention slicing enabled for VRAM optimization")
+            # * Attempt to enable xformers for further optimization
             try:
                 pipeline.enable_xformers_memory_efficient_attention()
                 console.print("[*] XFormers memory efficient attention enabled")
             except Exception:
-                console.print("[yellow]! XFormers not available.[/yellow]")
-
-            # * Enable model CPU offload for even lower VRAM usage
-            pipeline.enable_model_cpu_offload()
-            console.print("[*] Model CPU offload enabled for VRAM optimization")
+                console.print("[yellow]! XFormers not available, continuing without it.[/yellow]")
         else:
-            pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
-                str(model_path),
-                torch_dtype=torch.float32,
-                use_safetensors=True,
-            ).to(device)
-            console.print(
-                "[yellow]! CUDA not available, using CPU (will be slow)[/yellow]"
-            )
+            # * Load CPU pipeline while suppressing external warnings
+            with open(os.devnull, 'w') as _devnull, contextlib.redirect_stderr(_devnull):
+                pipeline = StableDiffusionImg2ImgPipeline.from_pretrained(
+                    str(model_path),
+                    torch_dtype=torch.float32,
+                    use_safetensors=True,
+                )
+            console.print("[yellow]! CUDA not available, using CPU (will be slow)[/yellow]")
 
         # * Set the scheduler based on user choice
         console.print(f"[*] Setting scheduler to: {scheduler_name}")
@@ -197,8 +247,14 @@ def setup_stable_diffusion_pipeline(model_id: str, scheduler_name: str = "UniPC"
             scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config)
 
         pipeline.scheduler = scheduler
-        # * Ensure the entire pipeline is on the correct device after changing scheduler
-        pipeline.to(device)
+        # * The pipeline's device is managed by the offloader if enabled.
+        # * Manually moving it again conflicts with the offloading mechanism.
+        # pipeline.to(device)
+        
+        # * Cache the compiled pipeline
+        _compiled_master_pipeline = pipeline
+        console.print("[green]💾 MASTER pipeline cached for reuse[/green]")
+        
         return pipeline
 
     except ImportError as e:
@@ -206,8 +262,45 @@ def setup_stable_diffusion_pipeline(model_id: str, scheduler_name: str = "UniPC"
         console.print("[yellow]Run: pip install diffusers transformers torch[/yellow]")
         raise typer.Exit(1)
     except Exception as e:
-        console.print(f"[red]! Error setting up pipeline: {e}[/red]")
+        console.print(f"[red]! Error setting up master pipeline: {e}[/red]")
         raise typer.Exit(1)
+
+
+def create_worker_pipeline() -> Any:
+    """
+    Create a worker pipeline by cloning the compiled master pipeline.
+    
+    Returns:
+        A worker pipeline based on the compiled master
+    """
+    if _compiled_master_pipeline is None:
+        raise ValueError("Master pipeline must be created first")
+    
+    try:
+        import torch
+        import copy
+        
+        # * Create a shallow copy of the master pipeline for this worker
+        # ! Deep copy would duplicate the entire model in memory - we want to share weights
+        console.print("[*] Creating worker pipeline from compiled master...")
+        worker_pipeline = copy.copy(_compiled_master_pipeline)
+        
+        # * Clone only the critical components that need to be separate per worker
+        worker_pipeline.unet = copy.copy(_compiled_master_pipeline.unet)
+        worker_pipeline.scheduler = copy.deepcopy(_compiled_master_pipeline.scheduler)
+        
+        # * Ensure worker is on the correct device
+        if torch.cuda.is_available():
+            # ! Do not manually move to cuda. The worker pipeline inherits the
+            # ! offloading mechanism from the master, which manages device placement.
+            pass
+        
+        console.print("[green]✓ Worker pipeline created from compiled master[/green]")
+        return worker_pipeline
+        
+    except Exception as e:
+        console.print(f"[red]! Error creating worker pipeline: {e}[/red]")
+        raise
 
 
 async def _stylize_worker(
@@ -323,7 +416,8 @@ async def stylize_frames(
 
                 # Check for exceptions in completed tasks
                 for task in done:
-                    if task.exception():
+                    exc = task.exception()
+                    if exc:
                         # If any task has an exception, cancel all others
                         for p_task in pending:
                             p_task.cancel()
@@ -331,7 +425,7 @@ async def stylize_frames(
                         if pending:
                             await asyncio.wait(pending)
                         # Re-raise the original exception
-                        raise task.exception()
+                        raise exc
 
                 # Update the set of pending tasks
                 pending_tasks = pending
@@ -587,6 +681,7 @@ async def run_stylization(
     upscale: bool,
     output: Path,
     max_resolution: str,
+    test_mode: bool,
     work_dir: Optional[Path] = None,
 ):
     """
@@ -598,9 +693,9 @@ async def run_stylization(
     console.print(f"Model: [blue]{model_id}[/blue]")
 
     # * Create temporary directories; allow custom work_dir to host temp files
-    temp_dir_kwargs = {"prefix": "stylizer_"}
+    temp_dir_kwargs: dict[str, Any] = {"prefix": "stylizer_"}
     if work_dir:
-        temp_dir_kwargs["dir"] = str(work_dir)
+        temp_dir_kwargs["dir"] = work_dir
     with tempfile.TemporaryDirectory(**temp_dir_kwargs) as temp_dir:
         temp_path = Path(temp_dir)
         frames_dir = temp_path / "frames"
@@ -612,20 +707,22 @@ async def run_stylization(
 
         # * Step 1: Extract frames
         console.print("\n[bold]Step 1: Extracting frames[/bold]")
-        success = await extract_frames(input_video, frames_dir, max_resolution)
+        success = await extract_frames(input_video, frames_dir, max_resolution, test_mode)
         if not success:
             console.print("[red]! Failed to extract frames[/red]")
             raise typer.Exit(1)
 
-        # * Step 2: Set up Stable Diffusion pipelines for concurrent processing
+        # * Step 2: Set up master pipeline and create workers
         CONCURRENCY_LIMIT = 2
         console.print(
-            f"\n[bold]Step 2: Setting up {CONCURRENCY_LIMIT} Stable Diffusion pipelines for concurrent processing[/bold]"
+            f"\n[bold]Step 2: Setting up master pipeline and {CONCURRENCY_LIMIT} worker pipelines[/bold]"
         )
-        pipelines = [
-            setup_stable_diffusion_pipeline(model_id, scheduler)
-            for _ in range(CONCURRENCY_LIMIT)
-        ]
+        
+        # * Create and compile the master pipeline first
+        master_pipeline = setup_master_compiled_pipeline(model_id, scheduler)
+        
+        # * Create worker pipelines from the compiled master
+        pipelines = [create_worker_pipeline() for _ in range(CONCURRENCY_LIMIT)]
         # * Optional: ControlNet support (stub)
         if controlnet_id:
             console.print(
@@ -735,6 +832,13 @@ def stylize(
             "--work-dir", "-w", help="Directory for temporary files (defaults to system temp)."
         ),
     ] = None,
+    test_mode: Annotated[
+        bool,
+        typer.Option(
+            "--test-mode",
+            help="Enable test mode (process first 2 seconds only).",
+        ),
+    ] = False,
 ):
     """
     Stylize a video using Stable Diffusion and optionally upscale with Real-ESRGAN.
@@ -748,7 +852,11 @@ def stylize(
     # * Interactive prompt for input video
     if input_video is None:
         input_video = prompt_for_path(
-            "Enter input video file:", default=None, must_exist=True, file_okay=True, dir_okay=False
+            "Enter input video file:",
+            default=None,
+            must_exist=True,
+            file_okay=True,
+            dir_okay=False,
         )
     # * Validate input file exists
     if not input_video.exists():
@@ -761,27 +869,70 @@ def stylize(
     # * Ensure prompt is set
     assert prompt is not None
 
-    # * Interactive prompt for strength
+    # * --- Interactive Settings Menu ---
+    # * We handle sliders separately as the generic function doesn't support them
     final_strength = strength
     if final_strength is None:
         final_strength = typer.prompt(
             "Enter stylization strength (0.0 to 1.0)", type=float, default=0.75
         )
-
     # * Validate strength
     if not (0.0 <= final_strength <= 1.0):
         console.print(
             f"[red]! Invalid strength: {final_strength}. Must be between 0.0 and 1.0.[/red]"
         )
-        console.print("[yellow]Using default value 0.75[/yellow]")
         final_strength = 0.75
 
-    # * Interactive prompt for inference steps
     final_steps = inference_steps
     if final_steps is None:
         final_steps = typer.prompt(
             "Enter number of inference steps (e.g., 8-20)", type=int, default=12
         )
+
+    settings_definitions = [
+        {
+            "key": "scheduler",
+            "label": "Scheduler",
+            "type": "choice",
+            "choices": {
+                "UniPC": "UniPC",
+                "DDIM": "DDIM",
+                "EulerA": "EulerA",
+                "DPM2M": "DPM2M",
+            },
+        },
+        {"key": "upscale", "label": "4x Upscaling (Real-ESRGAN)", "type": "toggle"},
+        {"key": "test_mode", "label": "Test Mode (First 2s)", "type": "toggle"},
+    ]
+
+    # * Get initial values from CLI or defaults for non-slider settings
+    current_settings = {
+        "scheduler": scheduler,
+        "upscale": upscale,
+        "test_mode": test_mode,
+    }
+
+    # * Launch interactive menu for toggles and choices
+    # * We enter interactive mode if the script is run without flags.
+    is_interactive = not (
+        strength or inference_steps or upscale or test_mode or scheduler != "UniPC"
+    )
+
+    final_settings = None
+    if is_interactive:
+        final_settings = prompt_for_interactive_settings(
+            settings_definitions, current_settings, title="Stylizer Settings"
+        )
+        if final_settings is None:
+            console.print("[yellow]! Operation cancelled by user.[/yellow]")
+            raise typer.Exit()
+    else:
+        final_settings = current_settings
+
+    # * Extract final values
+    final_scheduler = str(final_settings["scheduler"])
+    final_upscale = bool(final_settings["upscale"])
+    final_test_mode = bool(final_settings["test_mode"])
 
     # * Set up output path
     if output is None:
@@ -799,10 +950,11 @@ def stylize(
             use_animatediff,
             final_strength,
             final_steps,
-            scheduler,
-            upscale,
+            final_scheduler,
+            final_upscale,
             output,
             max_resolution,
+            final_test_mode,
             work_dir,
         )
     )

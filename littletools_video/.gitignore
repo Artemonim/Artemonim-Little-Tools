@@ -1,0 +1,70 @@
+# Python cache and compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Package build artifacts
+*.egg-info/
+build/
+dist/
+
+# Temporary video processing files
+temp_videos/
+*/temp_videos/
+temporary/
+*/temporary/
+
+# MatAnyone specific temporary files and outputs
+littletools_video/mat_anyone/hugging_face/temp_videos/
+littletools_video/mat_anyone/hugging_face/results/
+results/
+*/results/
+
+# Large pretrained model files (should be downloaded automatically)
+# Exclude specific large model files but keep documentation
+littletools_video/mat_anyone/pretrained_models/matanyone.pth
+littletools_video/mat_anyone/pretrained_models/sam_vit_h_4b8939.pth
+
+# Gradio temporary files
+gradio_cached_examples/
+*/gradio_cached_examples/
+
+# Video processing outputs and temporary files
+*.mp4.tmp
+*.wav.tmp
+*_converted.mp4
+*_converted.wav
+*_compatible.mp4
+*_compatible.wav
+*_normalized.*
+*_temp.*
+
+# FFmpeg temporary files
+ffmpeg_*.log
+*.ffmpeg.log
+
+# Audio/Video processing temporary directories
+normalized/
+converted/
+processed/
+output/
+temp/
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Log files
+*.log
+logs/
+
+# Environment files
+.env
+.env.local 

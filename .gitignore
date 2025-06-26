@@ -36,6 +36,18 @@ temporary/*
 0-INPUT-0/*
 0-OUTPUT-0/*
 
+# Video processing temporary files
+temp_videos/
+*_converted.mp4
+*_converted.wav
+*_compatible.mp4
+*_compatible.wav
+
+# Large model files (auto-downloaded)
+*.pth
+# Exclude pretrained_models but allow specific files (handled by local .gitignore)
+pretrained_models/*.pth
+
 # Logs
 *.log
 

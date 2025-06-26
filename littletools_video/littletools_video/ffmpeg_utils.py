@@ -533,6 +533,60 @@ async def get_video_resolution(input_path: str) -> Optional[tuple[int, int]]:
         print(f"! Exception getting resolution for {Path(input_path).name}: {e}")
         return None
 
+async def convert_to_compatible_mp4(input_path: str, output_dir: str = "temp_videos") -> Optional[str]:
+    """
+    Converts a video file to a standard H.264 MP4 format for compatibility, scaled to 720p.
+    """
+    input_p = Path(input_path)
+    output_p = Path(output_dir)
+    # Always recreate output directory to ensure fresh conversion
+    if output_p.exists():
+        # clean up old temporary videos
+        for f in output_p.iterdir():
+            try:
+                f.unlink()
+            except Exception:
+                pass
+    ensure_dir_exists(output_p)
+    
+    # Create a unique name for the temporary file
+    temp_filename = f"{input_p.stem}_compatible.mp4"
+    output_path = str(output_p / temp_filename)
+
+    console.print(f"[*] Converting '{input_p.name}' to a 720p compatible MP4 format...")
+    
+    # FFMPEG command: scale to 720p using lanczos filter
+    ffmpeg_cmd = [
+        "ffmpeg",
+        "-y",  # Overwrite output file
+        "-i", str(input_path),
+        "-vf", "scale=1280:720:flags=lanczos",
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        output_path
+    ]
+
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ffmpeg_cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+
+        if proc.returncode == 0:
+            console.print(f"[green]✓ Conversion successful. Output: {output_path}[/green]")
+            return output_path
+        else:
+            console.print(f"[red]! Failed to convert video '{input_p.name}'.[/red]")
+            console.print(f"[dim]FFmpeg error: {stderr.decode()}[/dim]")
+            return None
+    except Exception as e:
+        console.print(f"[red]! An exception occurred during conversion: {e}[/red]")
+        return None
+
 # Async task and signal handling
 def setup_signal_handlers(loop, stop_event, tasks, stats=None):
     """

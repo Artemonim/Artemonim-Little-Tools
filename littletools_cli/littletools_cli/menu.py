@@ -8,12 +8,9 @@ It discovers and loads all 'tool' plugins that are installed in the environment.
 """
 
 import importlib.metadata
-import os
-import platform
-import subprocess
-import sys
 import time
-from typing import Dict, List
+from typing import Dict
+from typing import Optional
 
 import typer
 from rich.console import Console
@@ -41,8 +38,8 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
         else:
             # Fallback for Python < 3.10
             entry_points = eps.get(
-                COMMANDS_GROUP, []
-            )  # pyright: ignore[reportAttributeAccessIssue]
+                COMMANDS_GROUP, []  # type: ignore
+            )  # Fallback for older importlib.metadata
 
         for entry_point in entry_points:
             try:
@@ -52,16 +49,21 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
                 else:
                     failed_plugins.append(f"'{entry_point.name}': Not a Typer app")
             except Exception as e:
-                failed_plugins.append(f"'{entry_point.name}': {type(e).__name__}: {str(e)}")
-                
+                failed_plugins.append(
+                    f"'{entry_point.name}': {type(e).__name__}: {str(e)}"
+                )
+
         # * Show failed plugins info if in debug mode or if plugins missing
         if failed_plugins:
-            console.print(f"[yellow]! Debug: Failed to load {len(failed_plugins)} plugin(s):[/yellow]")
+            console.print(
+                f"[yellow]! Debug: Failed to load {len(failed_plugins)} plugin(s):[/yellow]"
+            )
             for failure in failed_plugins:
                 console.print(f"  - {failure}")
             console.print("  Press any key to continue...")
             try:
                 import msvcrt
+
                 msvcrt.getch()  # Windows
             except ImportError:
                 input()  # Unix/Linux
@@ -100,7 +102,9 @@ def post_execution_dialog() -> str:
             return "exit"
 
 
-def show_tool_menu(tool_name: str, tool_app: typer.Typer):
+def show_tool_menu(  # noqa: C901
+    tool_name: str, tool_app: typer.Typer
+) -> Optional[str]:
     """Displays the menu for a specific tool group."""
     # Convert the Typer app to a Click Command/Group to reliably access its commands
     click_cmd = typer.main.get_command(tool_app)
@@ -162,7 +166,7 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
                 try:
                     # Invoke the selected command. For single-command apps invoke without subcommand name.
                     if is_group:
-                        tool_app([selected_command.name])  # type: ignore[arg-type]
+                        tool_app([selected_command.name])
                     else:
                         tool_app([])  # Runs the root Typer command directly
                 except SystemExit as e:
@@ -193,7 +197,7 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
                 time.sleep(1.5)
 
         except ValueError:
-            console.print(f"[red]! Invalid input. Please enter a number.[/red]")
+            console.print("[red]! Invalid input. Please enter a number.[/red]")
             time.sleep(1.5)
         except (KeyboardInterrupt, EOFError):
             break
@@ -201,7 +205,7 @@ def show_tool_menu(tool_name: str, tool_app: typer.Typer):
     return "main_menu"
 
 
-def main():
+def main() -> None:
     """Main function to run the interactive menu."""
     command_plugins = get_command_plugins()
 
@@ -250,7 +254,7 @@ def main():
                 time.sleep(1.5)
 
         except ValueError:
-            console.print(f"[red]! Invalid input. Please enter a number.[/red]")
+            console.print("[red]! Invalid input. Please enter a number.[/red]")
             time.sleep(1.5)
         except (KeyboardInterrupt, EOFError):
             console.print("\nGoodbye!")

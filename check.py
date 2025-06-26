@@ -34,6 +34,7 @@ LittleTools Code Quality Checker
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -415,6 +416,47 @@ class CodeQualityChecker:
                     if line.strip():
                         self.print_status(f"  {line}")
 
+    def _install_missing_type_stubs(self, mypy_output: str) -> bool:
+        """Extract and install missing type stubs suggested by mypy."""
+        if not mypy_output:
+            return False
+            
+        # * Pattern to match mypy hints for missing type stubs
+        # Example: 'Hint: "python3 -m pip install types-Send2Trash"'
+        pattern = r'Hint: "python3 -m pip install (types-[^"]+)"'
+        matches = re.findall(pattern, mypy_output)
+        
+        if not matches:
+            return False
+            
+        # * Remove duplicates and sort
+        packages_to_install = sorted(set(matches))
+        
+        if not self.json_output:
+            self.print_status(f"Found {len(packages_to_install)} missing type stub(s)")
+            self.print_status("Installing missing type stubs automatically...")
+            
+        success = True
+        for package in packages_to_install:
+            if not self.json_output:
+                self.print_status(f"Installing {package}...")
+                
+            exit_code, stdout, stderr = self.run_command([
+                sys.executable, "-m", "pip", "install", package
+            ])
+            
+            if exit_code == 0:
+                if not self.json_output:
+                    self.print_status(f"✓ Successfully installed {package}", "success")
+            else:
+                if not self.json_output:
+                    self.print_status(f"✗ Failed to install {package}", "error")
+                    if stderr:
+                        self.print_status(f"  Error: {stderr.strip()}")
+                success = False
+                
+        return success
+
     def run_all_checks(
         self, specific_tool: Optional[str] = None, fix_mode: bool = False
     ) -> Dict[str, Any]:
@@ -449,6 +491,16 @@ class CodeQualityChecker:
                     self.print_status(f"{tool_name}: Auto-fix completed", "success")
                 elif not self.json_output:
                     self.print_status(f"{tool_name}: Auto-fix had issues", "warning")
+                    
+            # * Auto-install missing type stubs if MyPy is going to run
+            if "mypy" in tools_to_run and not self.json_output:
+                self.print_status("Checking for missing type stubs...")
+                # * Run mypy once to check for missing stubs
+                mypy_result = self.run_tool("mypy", fix_mode=False)
+                if mypy_result["exit_code"] != 0 and mypy_result.get("stdout"):
+                    installed_stubs = self._install_missing_type_stubs(mypy_result["stdout"])
+                    if installed_stubs:
+                        self.print_status("Type stubs installed, will re-run MyPy in analysis phase", "success")
 
         # * Analysis phase: run all tools for checking
         if not self.json_output and not specific_tool:

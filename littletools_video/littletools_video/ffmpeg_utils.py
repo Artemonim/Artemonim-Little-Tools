@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 FFMPEG Utilities Module
 
@@ -13,32 +14,38 @@ This module provides shared functionality for:
 - Progress reporting
 """
 
-import os
+# * Future imports ----------------------------------------------------------------
+from __future__ import annotations
+
+# * Standard library imports -------------------------------------------------------
 import asyncio
 import json
+import os
 import platform
-import time
-import sys
 import re
+import signal
+import subprocess
+import sys
+import time
 from collections import defaultdict
 from pathlib import Path
-import subprocess
-import signal
+from typing import Any
+from typing import Callable
+from typing import Coroutine
+from typing import Dict
+from typing import List
 from typing import Optional
+from typing import Sequence
 
+# * Third-party imports -----------------------------------------------------------
 from rich.console import Console
 
-console = Console()
-
-# * Import common utilities
-from littletools_core.utils import (
-    print_separator,
-    print_file_info,
-    ensure_dir_exists,
-    clean_partial_output,
-    check_file_exists_with_overwrite,
-    format_duration,
-)
+# * Local application imports -----------------------------------------------------
+from littletools_core.utils import check_file_exists_with_overwrite
+from littletools_core.utils import clean_partial_output
+from littletools_core.utils import ensure_dir_exists
+from littletools_core.utils import format_duration
+from littletools_core.utils import print_separator
 
 # * Configuration variables with defaults
 DEFAULT_THREAD_LIMIT = 2
@@ -48,27 +55,31 @@ DEFAULT_TRUE_PEAK = -1.5
 DEFAULT_LOUDNESS_RANGE = 11.0
 DEFAULT_OUTPUT_FOLDER = "./normalized"
 
+# * Instantiate a shared Rich console for styled output
+console = Console()
+
 
 class ProcessingStats:
     """Class to track file processing statistics."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize statistics counters."""
-        self.stats = defaultdict(int)
+        super().__init__()
+        self.stats: Dict[str, int] = defaultdict(int)
         self.start_time = time.monotonic()
         self.interrupted = False
         # * Track active ffmpeg processes (for cancellation)
-        self.active_processes = []
+        self.active_processes: List[asyncio.subprocess.Process] = []
 
-    def increment(self, key):
+    def increment(self, key: str) -> None:
         """Increment a stat counter."""
         self.stats[key] += 1
 
-    def get_duration(self):
+    def get_duration(self) -> float:
         """Get the elapsed processing time in seconds."""
         return time.monotonic() - self.start_time
 
-    def update_task_status(self, task_id, status):
+    def update_task_status(self, task_id: str, status: str) -> None:
         """
         Update status for a specific task.
 
@@ -76,7 +87,7 @@ class ProcessingStats:
         """
         pass
 
-    def remove_task(self, task_id):
+    def remove_task(self, task_id: str) -> None:
         """
         Remove a task from tracking.
 
@@ -84,16 +95,16 @@ class ProcessingStats:
         """
         pass
 
-    def register_process(self, proc):
+    def register_process(self, proc: asyncio.subprocess.Process) -> None:
         """Register an active ffmpeg process for tracking."""
         self.active_processes.append(proc)
 
-    def remove_process(self, proc):
+    def remove_process(self, proc: asyncio.subprocess.Process) -> None:
         """Remove a process from the active processes list."""
         if proc in self.active_processes:
             self.active_processes.remove(proc)
 
-    def print_summary(self, elapsed_time: float):
+    def print_summary(self, elapsed_time: float) -> None:
         """Print final statistics in a consistent format."""
         processed = self.stats.get("success", 0) + self.stats.get("processed", 0)
         failed = self.stats.get("errors", 0)
@@ -112,7 +123,7 @@ class ProcessingStats:
         if elapsed_time > 0:
             console.print(f"  - Elapsed time: {format_duration(elapsed_time)}")
 
-    def print_status_line(self):
+    def print_status_line(self) -> None:
         """
         Print current status line for all active tasks.
 
@@ -120,7 +131,7 @@ class ProcessingStats:
         """
         pass
 
-    def print_stats(self):
+    def print_stats(self) -> None:
         """Print final statistics."""
         # Print final statistics
         elapsed = self.get_duration()
@@ -138,7 +149,7 @@ class ProcessingStats:
         print_separator()
 
 
-def get_max_workers(manual_limit=DEFAULT_THREAD_LIMIT):
+def get_max_workers(manual_limit: int = DEFAULT_THREAD_LIMIT) -> int:
     """
     Calculate the optimal number of worker threads based on CPU count.
 
@@ -153,7 +164,7 @@ def get_max_workers(manual_limit=DEFAULT_THREAD_LIMIT):
 
 
 # Console output functions (some now imported from little_tools_utils)
-def print_final_stats(stats, start_time):
+def print_final_stats(stats: Dict[str, int], start_time: float) -> None:
     """
     Prints final processing statistics.
 
@@ -173,7 +184,7 @@ def print_final_stats(stats, start_time):
 
 
 # File and path handling
-def get_mkv_files_from_path(path):
+def get_mkv_files_from_path(path: str) -> List[str]:
     """
     Get list of MKV files from a path.
 
@@ -195,7 +206,7 @@ def get_mkv_files_from_path(path):
 
 
 # File handling functions (now using little_tools_utils)
-def check_output_file_exists(output_path, overwrite=False):
+def check_output_file_exists(output_path: str, overwrite: bool = False) -> bool:
     """
     Check if output file exists and handle based on overwrite setting.
 
@@ -213,7 +224,9 @@ def check_output_file_exists(output_path, overwrite=False):
 
 
 # FFmpeg utilities
-async def get_audio_tracks(input_path, verbose=False):
+async def get_audio_tracks(
+    input_path: str, verbose: bool = False
+) -> List[Dict[str, Any]]:
     """
     Get audio track information from media file.
 
@@ -256,8 +269,11 @@ async def get_audio_tracks(input_path, verbose=False):
         raise RuntimeError(f"FFprobe error: {stderr.decode()}")
 
     try:
-        audio_info = json.loads(stdout.decode())
+        audio_info: Dict[str, Any] = json.loads(stdout.decode())
+        # * Explicitly cast to satisfy static type checkers
         tracks = audio_info.get("streams", [])
+        if not isinstance(tracks, list):
+            tracks = []
 
         # Debug: print found tracks
         if verbose:
@@ -270,11 +286,11 @@ async def get_audio_tracks(input_path, verbose=False):
 
 
 def build_loudnorm_filter_complex(
-    audio_tracks,
-    target_loudness=DEFAULT_TARGET_LOUDNESS,
-    true_peak=DEFAULT_TRUE_PEAK,
-    loudness_range=DEFAULT_LOUDNESS_RANGE,
-):
+    audio_tracks: List[Dict[str, Any]],
+    target_loudness: float = DEFAULT_TARGET_LOUDNESS,
+    true_peak: float = DEFAULT_TRUE_PEAK,
+    loudness_range: float = DEFAULT_LOUDNESS_RANGE,
+) -> str:
     """
     Build ffmpeg filter_complex string for audio normalization.
 
@@ -294,7 +310,9 @@ def build_loudnorm_filter_complex(
     return filter_complex.rstrip(";")
 
 
-def get_metadata_options(audio_tracks, verbose=False):
+def get_metadata_options(
+    audio_tracks: List[Dict[str, Any]], verbose: bool = False
+) -> List[str]:
     """
     Generate ffmpeg metadata options to preserve audio track titles.
 
@@ -396,17 +414,17 @@ def get_nvenc_video_options(codec: str, quality: str) -> list[str]:
     ] + base_options
 
 
-async def run_ffmpeg_command(
-    cmd,
-    stats=None,
-    stats_key="processed",
-    quiet=False,
-    output_path=None,
-    file_position=None,
-    file_count=None,
-    filename=None,
-    total_duration=None,
-):
+async def run_ffmpeg_command(  # noqa: C901
+    cmd: List[str],
+    stats: Optional[ProcessingStats] = None,
+    stats_key: str = "processed",
+    quiet: bool = False,
+    output_path: Optional[str] = None,
+    file_position: Optional[int] = None,
+    file_count: Optional[int] = None,
+    filename: Optional[str] = None,
+    total_duration: Optional[float] = None,
+) -> bool:
     """
     Run an FFmpeg command and handle errors.
 
@@ -678,7 +696,12 @@ async def convert_to_compatible_mp4(
 
 
 # Async task and signal handling
-def setup_signal_handlers(loop, stop_event, tasks, stats=None):
+def setup_signal_handlers(  # noqa: C901
+    loop: asyncio.AbstractEventLoop,
+    stop_event: asyncio.Event,
+    tasks: Sequence[asyncio.Task[Any]],
+    stats: Optional[ProcessingStats] = None,
+) -> Callable[[], None]:
     """
     Set up signal handlers for graceful shutdown.
 
@@ -692,7 +715,7 @@ def setup_signal_handlers(loop, stop_event, tasks, stats=None):
         Function to clean up signal handlers
     """
 
-    def signal_handler():
+    def signal_handler() -> None:
         """Handle interrupt signals by canceling all tasks."""
         # Clear the status line
         sys.stdout.write("\r" + " " * 100 + "\r")
@@ -737,7 +760,7 @@ def setup_signal_handlers(loop, stop_event, tasks, stats=None):
         )
 
         # Return function to remove signal handlers
-        def cleanup():
+        def cleanup() -> None:
             signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     else:
@@ -745,14 +768,14 @@ def setup_signal_handlers(loop, stop_event, tasks, stats=None):
             loop.add_signal_handler(sig, signal_handler)
 
         # Return function to remove signal handlers
-        def cleanup():
+        def cleanup() -> None:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.remove_signal_handler(sig)
 
     return cleanup
 
 
-async def create_output_dir(path):
+async def create_output_dir(path: str) -> None:
     """
     Create output directory if it doesn't exist.
 
@@ -762,7 +785,7 @@ async def create_output_dir(path):
     ensure_dir_exists(path)
 
 
-async def status_updater(stats, stop_event):
+async def status_updater(stats: ProcessingStats, stop_event: asyncio.Event) -> None:
     """
     Periodically update the status line.
 
@@ -780,7 +803,13 @@ async def status_updater(stats, stop_event):
 
 
 # Standard application structure
-async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER):
+async def standard_main(
+    args: Any,
+    process_func: Callable[
+        [Any, ProcessingStats, asyncio.Event], Coroutine[Any, Any, None]
+    ],
+    output_folder: str = DEFAULT_OUTPUT_FOLDER,
+) -> ProcessingStats:
     """
     Standard main function for FFmpeg processing applications.
 
@@ -790,7 +819,7 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
         output_folder: Default output folder path
 
     Returns:
-        None
+        ProcessingStats: Object containing processing statistics
     """
     # Setup
     stats = ProcessingStats()
@@ -803,7 +832,9 @@ async def standard_main(args, process_func, output_folder=DEFAULT_OUTPUT_FOLDER)
     loop = asyncio.get_running_loop()
     stop_event = asyncio.Event()
     # Pass stop_event to the processing function
-    main_task = asyncio.create_task(process_func(args, stats, stop_event))
+    main_task: asyncio.Task[None] = asyncio.create_task(
+        process_func(args, stats, stop_event)
+    )
 
     # * Create status updater task
     status_task = asyncio.create_task(status_updater(stats, stop_event))

@@ -23,18 +23,24 @@ Usage:
 # * NOTE: The implementation below is migrated from the former ``little_tools_utils``
 #   module without functional changes.
 
+import asyncio
 import os
-import sys
-import signal
 import platform
 import shutil
-from pathlib import Path
-from typing import List, Optional, Union, Callable, Dict, Any
-import send2trash  # * For safe file deletion to recycle bin
+import signal
+import sys
 import time
+from pathlib import Path
+from typing import Any
+from typing import Callable
+from typing import Dict
+from typing import List
+from typing import Optional
+from typing import Union
+
+import send2trash  # * For safe file deletion to recycle bin
 import typer
 from rich.console import Console
-import asyncio
 
 # * Better Comments:
 # * Important
@@ -42,11 +48,11 @@ import asyncio
 # ? Question
 # TODO:
 
-console = Console() # Add console for run_tasks_with_semaphore
+console = Console()  # Add console for run_tasks_with_semaphore
 
 # * Global variables for signal handling
 _interrupted = False
-_cleanup_functions: List[Callable] = []
+_cleanup_functions: List[Callable[[], None]] = []
 
 # * Default directories used across all tools
 DEFAULT_INPUT_DIR_NAME = "0-INPUT-0"
@@ -58,13 +64,13 @@ def is_interrupted() -> bool:
     return _interrupted
 
 
-def register_cleanup_function(func: Callable) -> None:
+def register_cleanup_function(func: Callable[[], None]) -> None:
     """Register a cleanup function to be called when the program is interrupted."""
-    global _cleanup_functions
+    global _cleanup_functions  # noqa: F824
     _cleanup_functions.append(func)
 
 
-def _signal_handler(signum, frame):  # noqa: D401
+def _signal_handler(signum: int, frame: Any) -> None:  # noqa: D401
     """Handle interrupt signals gracefully (e.g., Ctrl+C)."""
     global _interrupted
     _interrupted = True
@@ -211,7 +217,7 @@ def format_duration(seconds: float) -> str:
     return f"{minutes:02d}:{secs:02d}"
 
 
-def get_platform_info() -> dict:
+def get_platform_info() -> Dict[str, Any]:
     """Return information about the current platform."""
     system = platform.system()
     return {
@@ -290,7 +296,7 @@ def prompt_for_path(
 class BatchTimeEstimator:
     """Estimate remaining time for a batch process based on workload."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.start_time: Optional[float] = None
         self.total_workload: float = 0.0
         self.workload_processed: float = 0.0
@@ -395,7 +401,9 @@ def prompt_for_interactive_settings(
     """
     console = Console()
 
-    def _prompt_for_choice(label: str, choices: dict, current_value: str) -> str:
+    def _prompt_for_choice(
+        label: str, choices: Dict[str, Any], current_value: str
+    ) -> str:
         console.print(f"\n[bold]Select {label}[/bold]")
         choice_map = {str(i + 1): value for i, value in enumerate(choices.values())}
         for i, (name, value) in enumerate(choices.items()):
@@ -411,7 +419,7 @@ def prompt_for_interactive_settings(
         while True:
             raw_input = typer.prompt("Your choice", default=default_idx_str)
             if raw_input in choice_map:
-                return choice_map[raw_input]
+                return str(choice_map[raw_input])
             console.print(
                 f"[red]Invalid choice. Please enter a number from 1 to {len(choices)}.[/red]"
             )
@@ -482,13 +490,13 @@ def prompt_for_interactive_settings(
                 )
                 time.sleep(1.5)
         except ValueError:
-            console.print(f"[red]! Invalid input. Please enter a number or S/Q.[/red]")
+            console.print("[red]! Invalid input. Please enter a number or S/Q.[/red]")
             time.sleep(1.5)
 
 
 async def run_tasks_with_semaphore(
-    tasks: List, stop_event: asyncio.Event, concurrency: int
-):
+    tasks: List[Any], stop_event: asyncio.Event, concurrency: int
+) -> None:
     """
     Run tasks with a semaphore to limit concurrency.
 
@@ -505,7 +513,7 @@ async def run_tasks_with_semaphore(
         f"[*] Concurrency limit set to {limit} to avoid GPU resource contention."
     )
 
-    async def run_task(task):
+    async def run_task(task: Any) -> None:
         # Wait for the stop event before starting a new task
         if stop_event.is_set():
             return

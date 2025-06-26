@@ -7,9 +7,11 @@ This module provides helper functions for interacting with the Hugging Face Hub,
 such as downloading models and datasets.
 """
 
-from pathlib import Path
 import os
-from typing import Optional, List
+from pathlib import Path
+from typing import List
+from typing import Optional
+
 from huggingface_hub import snapshot_download
 from rich.console import Console
 
@@ -50,7 +52,7 @@ def download_hf_model(
         f"[*] Downloading model [cyan]'{repo_id}'[/cyan] from Hugging Face Hub..."
     )
     console.print(
-        f"[*] This may take a while depending on model size and your connection."
+        "[*] This may take a while depending on model size and your connection."
     )
     console.print(
         f"[*] Files are cached locally in: [dim]{os.environ['HF_HOME']}[/dim]"

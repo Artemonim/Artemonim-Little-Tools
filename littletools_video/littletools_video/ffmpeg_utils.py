@@ -15,18 +15,18 @@
       - register_process(proc: asyncio.subprocess.Process) -> None (line 110)
       - remove_process(proc: asyncio.subprocess.Process) -> None (line 114)
       - print_summary(elapsed_time: float) -> None (line 119)
-      - print_status_line() -> None (line 138)
-      - print_stats() -> None (line 146)
+      - print_status_line() -> None (line 152)
+      - print_stats() -> None (line 160)
       - Functions:
-        - get_max_workers(manual_limit: int = DEFAULT_THREAD_LIMIT) -> int (line 164)
-        - print_final_stats(stats: Dict[str, int], start_time: float) -> None (line 179)
-        - get_mkv_files_from_path(path: str) -> List[str] (line 199)
-        - check_output_file_exists(output_path: str, overwrite: bool = False) -> bool (line 221)
-        - get_nvenc_video_options(codec: str, quality: str) -> list[str] (line 366)
-        - get_video_duration(input_path: str) -> Optional[float] (line 576)
-        - get_video_resolution(input_path: str) -> Optional[tuple[int, int]] (line 606)
-        - create_output_dir(path: str) -> None (line 790)
-        - status_updater(stats: ProcessingStats, stop_event: asyncio.Event) -> None (line 800)
+        - get_max_workers(manual_limit: int = DEFAULT_THREAD_LIMIT) -> int (line 178)
+        - print_final_stats(stats: Dict[str, int], start_time: float) -> None (line 193)
+        - get_mkv_files_from_path(path: str) -> List[str] (line 213)
+        - check_output_file_exists(output_path: str, overwrite: bool = False) -> bool (line 235)
+        - get_nvenc_video_options(codec: str, quality: str) -> list[str] (line 380)
+        - get_video_duration(input_path: str) -> Optional[float] (line 590)
+        - get_video_resolution(input_path: str) -> Optional[tuple[int, int]] (line 620)
+        - create_output_dir(path: str) -> None (line 804)
+        - status_updater(stats: ProcessingStats, stop_event: asyncio.Event) -> None (line 814)
     --- END AUTO-GENERATED DOCSTRING ---
 FFMPEG Utilities Module
 
@@ -163,6 +163,17 @@ class ProcessingStats:
 
         if elapsed_time > 0:
             console.print(f"  - Elapsed time: {format_duration(elapsed_time)}")
+            # * Show total size delta if recorded
+            bytes_in = self.stats.get("bytes_in", 0)
+            bytes_out = self.stats.get("bytes_out", 0)
+            if bytes_in > 0:
+                delta = bytes_out - bytes_in
+                delta_mb = delta / (1024 * 1024)
+                percent_change = (delta / bytes_in) * 100 if bytes_in != 0 else 0
+                sign = "+" if delta > 0 else ""
+                console.print(
+                    f"  - Total size delta: {sign}{delta_mb:.2f} MB ({sign}{percent_change:.2f}%)"
+                )
 
     def print_status_line(self) -> None:
         """
@@ -575,11 +586,7 @@ async def run_ffmpeg_command(  # noqa: C901
         else:
             if stats and not stats.interrupted:
                 stats.increment("errors")
-            print(f"\n--- FFmpeg Error Output for {filename} ---")
-            # Print last 15 lines of stderr for diagnosis
-            for line in stderr_output[-15:]:
-                print(line)
-            print("------------------------------------------")
+            # * Suppress FFmpeg error log details
             return False
 
     except asyncio.CancelledError:

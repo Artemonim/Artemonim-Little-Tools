@@ -8,7 +8,8 @@
 
     Classes/Functions:
       - Functions:
-        - single() (line 254)
+        - single() -> None (line 278)
+        - tree() -> None (line 469)
     --- END AUTO-GENERATED DOCSTRING ---
 Video Converter Tool
 
@@ -72,9 +73,11 @@ async def _process_single_file_for_conversion(
     estimator: BatchTimeEstimator,
     position: int,
     total: int,
+    use_original_name: bool = False,
 ) -> None:
     """Helper to process one file asynchronously."""
-    output_filename = f"{file_path.stem}_converted.mp4"
+    # Determine output filename: use original name or add suffix
+    output_filename = file_path.name if use_original_name else f"{file_path.stem}_converted.mp4"
     output_path = output_dir / output_filename
 
     eta_str = estimator.get_eta_str()
@@ -139,7 +142,18 @@ async def _process_single_file_for_conversion(
         total_duration=total_duration,
     )
     if success:
-        console.print(f"  [green]✓ Success:[/green] {output_path.name}")
+        # * Calculate size delta between input and output
+        input_size = file_path.stat().st_size
+        output_size = output_path.stat().st_size
+        # * Record cumulative size statistics
+        stats.stats["bytes_in"] += input_size
+        stats.stats["bytes_out"] += output_size
+        delta = output_size - input_size
+        delta_mb = delta / (1024 * 1024)
+        sign = "+" if delta > 0 else ""
+        console.print(
+            f"  [green]✓ Success:[/green] {output_path.name} (Δ {sign}{delta_mb:.2f} MB)"
+        )
         if total_duration:
             estimator.update(total_duration)
     else:
@@ -241,6 +255,7 @@ def convert(
                 estimator,
                 i + 1,
                 len(files_to_process),
+                use_original_name=False,
             )
             for i, file in enumerate(files_to_process)
         ]
@@ -421,6 +436,7 @@ def single() -> None:  # noqa: C901
                         estimator=estimator,
                         position=idx,
                         total=total_files,
+                        use_original_name=False,
                     )
                     # If single file and custom output name, rename result
                     if output_file and total_files == 1:
@@ -504,23 +520,12 @@ def tree() -> None:  # noqa: C901
             p for p in all_files if p.suffix.lower() not in supported_extensions
         ]
 
+        # --- Exit if no files to process ---
         if not video_files_to_process and not other_files_to_copy:
             console.print("[yellow]! No files found in the source directory.[/yellow]")
             raise typer.Exit()
 
         console.print(f"[*] Found {len(video_files_to_process)} video(s) to convert.")
-
-        # --- Ask about other files ---
-        copy_other_files = False
-        if other_files_to_copy:
-            console.print(f"[*] Found {len(other_files_to_copy)} non-video file(s).")
-            copy_other_files = typer.confirm(
-                "Do you want to copy these files to the destination directory?"
-            )
-
-        if not video_files_to_process and not copy_other_files:
-            console.print("[yellow]! No operations to perform.[/yellow]")
-            raise typer.Exit()
 
         # --- Interactive Settings Menu ---
         initial_settings = {
@@ -583,13 +588,25 @@ def tree() -> None:  # noqa: C901
 
         # --- Run Operations ---
         stats = ProcessingStats()
+        # * Filter out existing videos if overwrite disabled
+        if not final_settings["overwrite"]:
+            filtered_videos: List[Path] = []
+            for file_path in video_files_to_process:
+                relative_path = file_path.relative_to(input_dir)
+                dest_path = output_dir / relative_path
+                if dest_path.exists():
+                    console.print(f"  -> Skipped (exists): {relative_path}")
+                    stats.increment("skipped")
+                else:
+                    filtered_videos.append(file_path)
+            video_files_to_process = filtered_videos
         stats.stats["total"] = len(video_files_to_process)
         estimator = BatchTimeEstimator()
         stop_event = asyncio.Event()
         start_time = time.monotonic()
 
         # --- Copy non-video files first ---
-        if copy_other_files:
+        if other_files_to_copy:
             console.print("\n[*] Copying non-video files...")
             for file_path in other_files_to_copy:
                 # ! Check for interruption during file copying
@@ -655,6 +672,8 @@ def tree() -> None:  # noqa: C901
                     except ValueError:
                         start_idx = 0
                     input_size = file_path.stat().st_size
+                    # * Capture video duration for ETA and fallback revert
+                    video_duration = await get_video_duration(str(file_path)) or 0
                     for q in quality_order[start_idx:]:
                         # Convert with quality q
                         await _process_single_file_for_conversion(
@@ -670,9 +689,10 @@ def tree() -> None:  # noqa: C901
                             estimator=estimator,
                             position=position,
                             total=total,
+                            use_original_name=True,
                         )
-                        # Compare sizes
-                        output_path = out_dir / f"{file_path.stem}_converted.mp4"
+                        # Compare sizes using original filename
+                        output_path = out_dir / file_path.name
                         if output_path.exists():
                             output_size = output_path.stat().st_size
                             if output_size <= input_size:
@@ -680,13 +700,12 @@ def tree() -> None:  # noqa: C901
                             # retry with next quality level
                             console.print(
                                 f"  [yellow]! Output larger than input, retrying with lower quality CQ={q}"
-                                + (
-                                    ""
-                                    if q == quality_order[-1]
-                                    else f" -> CQ={quality_order[quality_order.index(q)+1]}"
-                                )
                             )
-                            stats.increment("processed")
+                            # * Revert previous conversion count and ETA estimation before retry
+                            if video_duration:
+                                estimator.workload_processed -= video_duration
+                                estimator.items_processed -= 1
+                            stats.stats["processed"] -= 1
                             # remove previous oversized file
                             safe_delete(output_path)
                         else:

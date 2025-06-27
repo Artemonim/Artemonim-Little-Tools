@@ -28,7 +28,7 @@
         - get_platform_info() -> Dict[str, Any] (line 227)
         - check_command_available(command: str) -> bool (line 240)
         - create_backup_name(file_path: Union[str, Path], suffix: str = "_backup") -> Path (line 245)
-        - get_default_io_paths(tool_slug: str = "") -> tuple[Path, Path] (line 348)
+        - get_default_io_paths(tool_slug: str = "") -> tuple[Path, Path] (line 351)
     --- END AUTO-GENERATED DOCSTRING ---
 LittleTools Core Utilities
 
@@ -363,6 +363,9 @@ class BatchTimeEstimator:
             return "N/A"
 
         remaining_workload = self.total_workload - self.workload_processed
+        # * If no remaining workload, return zero ETA to avoid negative values
+        if remaining_workload <= 0:
+            return format_duration(0)
         estimated_seconds = remaining_workload / processing_rate
         return format_duration(estimated_seconds)
 
@@ -534,7 +537,6 @@ async def run_tasks_with_semaphore(
         stop_event: Event to signal task termination.
         concurrency: The maximum number of tasks to run at once.
     """
-    # * Force single-file processing for GPU tasks to avoid resource contention.
     limit = concurrency
     semaphore = asyncio.Semaphore(limit)
 
@@ -543,98 +545,53 @@ async def run_tasks_with_semaphore(
     )
 
     async def run_task(task: Any) -> None:
-        # Check for stop event before starting a new task
         if stop_event.is_set():
             return
-
         async with semaphore:
             if not stop_event.is_set():
                 try:
                     await task
                 except asyncio.CancelledError:
-                    # ! Task cancellation is expected on interrupt - re-raise to propagate
                     raise
                 except Exception as e:
-                    # ! Log other exceptions but don't stop the entire process
                     console.print(f"[red]! Task failed with exception: {e}[/red]")
 
-    # Create individual tasks that can be cancelled properly
+    if not tasks:
+        return
+
     running_tasks = [asyncio.create_task(run_task(task)) for task in tasks]
+    
+    # gather() is awaitable itself, no need to wrap in a task.
+    gather_future = asyncio.gather(*running_tasks)
+    
+    # Create a task that waits for the stop event.
+    stop_task = asyncio.create_task(stop_event.wait())
 
     try:
-        # Create a task to monitor stop_event
-        stop_task = asyncio.create_task(stop_event.wait())
-
-        # Wait for either all tasks to complete or stop_event to be set
+        # Wait for either the gather_future (all tasks done) or stop_task to complete.
         done, pending = await asyncio.wait(
-            running_tasks + [stop_task], return_when=asyncio.FIRST_COMPLETED
+            [gather_future, stop_task], return_when=asyncio.FIRST_COMPLETED
         )
 
-        # If stop_event was triggered, cancel remaining tasks
+        # If the stop_task finished, it means we need to cancel the pending tasks.
         if stop_task in done:
-            console.print(
-                "[yellow]! Stop event received, cancelling remaining tasks...[/yellow]"
-            )
-            for task in running_tasks:
-                if not task.done():
-                    task.cancel()
+            # Cancel the future, which will propagate cancellation to its children.
+            gather_future.cancel()
+        
+        # If the gather_future finished, we no longer need the stop_task.
+        if gather_future in done:
+            stop_task.cancel()
 
-            # Wait for cancellation to complete with timeout
-            if running_tasks:
-                try:
-                    await asyncio.wait_for(
-                        asyncio.gather(*running_tasks, return_exceptions=True),
-                        timeout=3.0,
-                    )
-                except asyncio.TimeoutError:
-                    console.print(
-                        "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
-                    )
-        else:
-            # All tasks completed normally, wait for any remaining
-            if pending:
-                await asyncio.wait(pending)
+        # Await the gather_future to propagate any exceptions or cancellations.
+        await gather_future
 
-    except asyncio.CancelledError:
-        # ! Cancel all running tasks if the main task is cancelled
-        console.print(
-            "[yellow]! Main task cancelled, stopping all subtasks...[/yellow]"
-        )
-        for task in running_tasks:
-            if not task.done():
-                task.cancel()
-
-        # Wait for all tasks to be cancelled with timeout
-        if running_tasks:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*running_tasks, return_exceptions=True), timeout=3.0
-                )
-            except asyncio.TimeoutError:
-                console.print(
-                    "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
-                )
-        raise
-    except KeyboardInterrupt:
-        # ! Handle direct keyboard interrupt
-        console.print(
-            "[yellow]! Keyboard interrupt received, stopping all tasks...[/yellow]"
-        )
-        stop_event.set()
-        for task in running_tasks:
-            if not task.done():
-                task.cancel()
-
-        # Wait for all tasks to be cancelled with timeout
-        if running_tasks:
-            try:
-                await asyncio.wait_for(
-                    asyncio.gather(*running_tasks, return_exceptions=True), timeout=3.0
-                )
-            except asyncio.TimeoutError:
-                console.print(
-                    "[yellow]! Some tasks did not cancel within timeout.[/yellow]"
-                )
+    except (asyncio.CancelledError, KeyboardInterrupt):
+        # The entire run_tasks_with_semaphore function was cancelled.
+        # Clean up by cancelling all spawned tasks.
+        gather_future.cancel()
+        stop_task.cancel()
+        # Await them to ensure they are fully cancelled before re-raising.
+        await asyncio.gather(gather_future, stop_task, return_exceptions=True)
         raise
 
 

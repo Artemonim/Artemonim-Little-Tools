@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Dependency Scanner for LittleTools.
+Enhanced Dependency Scanner for LittleTools.
 
 A utility to scan a Python project directory and list its third-party dependencies.
 This helps identify potentially unused packages in a `pyproject.toml` file by
-providing a simple list of modules that are actually imported in the code.
+providing a detailed analysis of modules that are actually imported in the code.
+
+Features:
+- AST-based parsing for accurate import detection
+- Detection of conditional and function-level imports
+- Detailed file-by-file breakdown
+- Exclusion of standard library and local packages
+- .gitignore-aware scanning
 
 Usage:
     python requirementsBuilder.py <path_to_directory>
+    python requirementsBuilder.py <path_to_directory> --detailed
 """
 import sys
 import argparse
@@ -49,40 +57,86 @@ STANDARD_LIBRARIES = {
     'wave', 'weakref', 'webbrowser', 'winreg', 'winsound', 'wsgiref', 'xdrlib',
     'xml', 'xmlrpc', 'zipapp', 'zipfile', 'zipimport', 'zlib',
     # ! Also exclude common development/testing libraries that shouldn't be in dependencies
-    'setuptools', 'distutils', 'pytest', 'unittest', 'test', 'typing_extensions'
+    'setuptools', 'distutils', 'pytest', 'unittest', 'test', 'typing_extensions',
+    # ! Exclude __future__ as it's a special import, not a dependency
+    '__future__'
+}
+
+# * Local package prefixes to exclude (these are internal to the project)
+LOCAL_PACKAGE_PREFIXES = {
+    'littletools_', 'littletools'
+}
+
+# * Common internal module names that are not dependencies
+INTERNAL_MODULES = {
+    'utils', 'config', 'constants', 'helpers', 'common', 'base'
 }
 
 
-def find_imports_in_file_ast(file_path: Path) -> Set[str]:
+def is_local_package(module_name: str) -> bool:
+    """
+    Check if a module is a local package (part of the current project).
+    
+    Args:
+        module_name (str): The module name to check.
+        
+    Returns:
+        bool: True if it's a local package, False otherwise.
+    """
+    return (any(module_name.startswith(prefix) for prefix in LOCAL_PACKAGE_PREFIXES) or
+            module_name in INTERNAL_MODULES)
+
+
+def find_imports_in_file_ast(file_path: Path, detailed: bool = False) -> tuple[Set[str], dict]:
     """
     Parses a Python file using AST to find all non-standard imported modules.
     
     Args:
         file_path (Path): Path to the Python file to analyze.
+        detailed (bool): If True, return detailed information about import locations.
 
     Returns:
-        Set[str]: A set of top-level module names that are imported.
+        tuple: (set of module names, dict with detailed info if requested)
     """
     third_party_imports = set()
+    import_details = {}
+    
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         tree = ast.parse(content, filename=str(file_path))
+        
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     module = alias.name.split('.')[0]
-                    if module and module not in STANDARD_LIBRARIES:
+                    if (module and 
+                        module not in STANDARD_LIBRARIES and 
+                        not is_local_package(module)):
                         third_party_imports.add(module)
+                        if detailed:
+                            if module not in import_details:
+                                import_details[module] = []
+                            import_details[module].append(f"line {node.lineno}: import {alias.name}")
+                            
             elif isinstance(node, ast.ImportFrom):
                 # Handles 'from module import ...' but skips relative imports '.'.
                 if node.module and not node.module.startswith('.'):
                     module = node.module.split('.')[0]
-                    if module and module not in STANDARD_LIBRARIES:
+                    if (module and 
+                        module not in STANDARD_LIBRARIES and 
+                        not is_local_package(module)):
                         third_party_imports.add(module)
+                        if detailed:
+                            if module not in import_details:
+                                import_details[module] = []
+                            imported_names = ', '.join(alias.name for alias in node.names)
+                            import_details[module].append(f"line {node.lineno}: from {node.module} import {imported_names}")
+                            
     except (SyntaxError, UnicodeDecodeError, IOError) as e:
         print(f"Warning: Could not process {file_path}: {e}")
-    return third_party_imports
+        
+    return third_party_imports, import_details
 
 
 def load_gitignore_patterns(directory: Path) -> List[str]:
@@ -157,12 +211,13 @@ def is_ignored(file_path: Path, ignore_patterns: List[str], base_dir: Path) -> b
     return False
 
 
-def scan_directory_for_dependencies(directory: Path):
+def scan_directory_for_dependencies(directory: Path, detailed: bool = False):
     """
     Scans a directory for Python files, extracts their dependencies, and prints the result.
     
     Args:
         directory (Path): The directory to scan.
+        detailed (bool): If True, provide detailed file-by-file breakdown.
     """
     print(f"Scanning for Python files in: {directory}\n")
     
@@ -180,21 +235,54 @@ def scan_directory_for_dependencies(directory: Path):
         return
 
     all_imports = set()
+    file_imports = {}
+    
     print("Found files to scan:")
     for file_path in python_files:
         print(f"  - {file_path.relative_to(directory)}")
-        all_imports.update(find_imports_in_file_ast(file_path))
+        imports, details = find_imports_in_file_ast(file_path, detailed)
+        all_imports.update(imports)
+        if detailed and imports:
+            file_imports[file_path.relative_to(directory)] = (imports, details)
 
     sorted_imports = sorted(all_imports)
 
-    print("\n--- Found Third-Party Dependencies ---")
+    if detailed and file_imports:
+        print("\n" + "="*60)
+        print("DETAILED FILE-BY-FILE ANALYSIS")
+        print("="*60)
+        
+        for file_path, (imports, details) in file_imports.items():
+            if imports:
+                print(f"\n📁 {file_path}")
+                print("-" * (len(str(file_path)) + 3))
+                for module in sorted(imports):
+                    print(f"  • {module}")
+                    if module in details:
+                        for detail in details[module]:
+                            print(f"    └─ {detail}")
+
+    print("\n" + "="*60)
+    print("SUMMARY: Third-Party Dependencies Found")
+    print("="*60)
     if not sorted_imports:
-        print("No third-party imports found.")
+        print("❌ No third-party imports found.")
     else:
-        for module in sorted_imports:
-            print(module)
-    print("------------------------------------")
-    print("\nCompare this list with your `pyproject.toml` to find unused packages.")
+        for i, module in enumerate(sorted_imports, 1):
+            print(f"{i:2d}. {module}")
+    
+    print("\n" + "="*60)
+    print("NEXT STEPS")
+    print("="*60)
+    print("1. Compare this list with your `pyproject.toml` dependencies section")
+    print("2. Dependencies in pyproject.toml but NOT in this list = potentially unused")
+    print("3. Dependencies in this list but NOT in pyproject.toml = missing dependencies")
+    print("4. ⚠️  CAUTION: Some imports may be conditional or dynamic - review carefully!")
+    
+    if detailed:
+        print("\n💡 TIP: Use the detailed analysis above to understand WHERE each dependency is used")
+    else:
+        print("\n💡 TIP: Run with --detailed flag for file-by-file breakdown")
 
 
 def main() -> int:
@@ -202,8 +290,9 @@ def main() -> int:
     Main function to parse CLI arguments and run the dependency scanning process.
     """
     parser = argparse.ArgumentParser(
-        description="Scan a Python project to find third-party dependencies.",
-        epilog="This tool helps identify unused packages by listing all imported modules."
+        description="Enhanced dependency scanner for Python projects.",
+        epilog="This tool helps identify unused packages by analyzing actual imports in your code.",
+        formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument(
         'directory', 
@@ -211,18 +300,23 @@ def main() -> int:
         default='.', 
         help="The directory to scan for Python files. Defaults to the current directory."
     )
+    parser.add_argument(
+        '--detailed', '-d',
+        action='store_true',
+        help="Show detailed file-by-file breakdown of imports and their locations."
+    )
     args = parser.parse_args()
 
     scan_dir = Path(args.directory).resolve()
     if not scan_dir.is_dir():
-        print(f"Error: '{scan_dir}' is not a valid directory.", file=sys.stderr)
+        print(f"❌ Error: '{scan_dir}' is not a valid directory.", file=sys.stderr)
         return 1
 
     try:
-        scan_directory_for_dependencies(scan_dir)
+        scan_directory_for_dependencies(scan_dir, detailed=args.detailed)
         return 0
     except KeyboardInterrupt:
-        print("\nOperation cancelled by user.", file=sys.stderr)
+        print("\n\n⚠️  Operation cancelled by user.", file=sys.stderr)
         return 130
 
 

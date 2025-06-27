@@ -1,123 +1,121 @@
-# Как добавлять инструменты в LittleTools
+# How to Add Tools to LittleTools
 
-> **Для опытных пользователей и ИИ-ассистентов:** Существует краткая, сжатая версия этой инструкции, оптимизированная для быстрого ознакомления и экономии контекста. См. [`ADDING_NEW_TOOLS_QUICK.md`](./ADDING_NEW_TOOLS_QUICK.md).
+This guide explains how to add new tools to the LittleTools suite. The project is designed so that the main interactive menu (`lt`) automatically discovers and loads any correctly configured tool packages.
 
-Это руководство объясняет, как добавлять новые инструменты в набор LittleTools. Проект спроектирован так, чтобы основное интерактивное меню (`lt`) автоматически обнаруживало и загружало любые корректно настроенные пакеты-инструменты.
+## Core Concept: Extending or Creating Packages
 
-## Основная концепция: Расширение или создание пакетов
+Each "tool" (e.g., `video-converter`) is part of a thematic Python package (e.g., `littletools_video`).
 
-Каждый "инструмент" (например, `video-converter`) является частью тематического пакета Python (например, `littletools_video`).
+Your main task when adding new functionality is to decide:
 
-Ваша основная задача при добавлении новой функциональности — решить:
+1.  **Extend an existing package?** If your new function is closely related to video, text, audio, etc., you should add it to the corresponding package (`littletools_video`, `littletools_txt`, `littletools_speech`). This is the preferred method as it promotes code reuse.
+2.  **Create a new package?** If your function represents a completely new category of tools (e.g., working with archives or images), then a new package should be created.
 
-1.  **Расширить существующий пакет?** Если ваша новая функция тесно связана с видео, текстом, аудио и т.д., вам следует добавить ее в соответствующий пакет (`littletools_video`, `littletools_txt`, `littletools_speech`). Это предпочтительный способ, так как он способствует переиспользованию кода.
-2.  **Создать новый пакет?** Если ваша функция представляет совершенно новую категорию инструментов (например, работа с архивами или изображениями), тогда следует создать новый пакет.
-
-В обоих случаях важно активно использовать общие утилиты из `littletools-core`, чтобы избежать дублирования кода.
+In both cases, it is important to actively use the common utilities from `littletools-core` to avoid code duplication.
 
 ---
 
-## Рекомендация: Загрузка ML-моделей через Hugging Face Hub
+## Recommendation: Loading ML Models via Hugging Face Hub
 
-Для обеспечения консистентности и упрощения управления моделями машинного обучения (например, Whisper, BERT, и т.д.), настоятельно рекомендуется загружать их из [Hugging Face Hub](https://huggingface.co/).
+To ensure consistency and simplify the management of machine learning models (e.g., Whisper, BERT, etc.), it is highly recommended to download them from the [Hugging Face Hub](https://huggingface.co/).
 
-В `littletools-core` для этого предусмотрена специальная утилита.
+A dedicated utility is provided in `littletools-core` for this purpose.
 
-**Пример использования:**
+**Example Usage:**
 
 ```python
 # ! bad-practice
-# model = whisper.load_model("large-v3") # Загрузка напрямую, может быть нестабильной
+# model = whisper.load_model("large-v3") # Direct download, can be unstable
 
 # * good-practice
 from littletools_core.huggingface_utils import download_hf_model
 
-# 1. Определите ID репозитория модели на Hugging Face Hub
+# 1. Define the model repository ID on Hugging Face Hub
 repo_id = "openai/whisper-large-v3"
 
-# 2. Скачайте модель, используя утилиту
-# Утилита кэширует модель локально в папке .huggingface в корне проекта
+# 2. Download the model using the utility
+# The utility caches the model locally in the .huggingface folder in the project root
 model_path = download_hf_model(repo_id=repo_id)
 
-# 3. Загрузите модель из локального пути
+# 3. Load the model from the local path
 model = whisper.load_model(model_path, device="cuda")
 ```
 
-Этот подход обеспечивает:
+This approach provides:
 
--   **Кэширование:** Модели скачиваются один раз и хранятся локально.
--   **Централизованное управление:** Все модели проходят через единый механизм.
--   **Надежность:** Меньшая зависимость от прямых вызовов API конкретных библиотек для загрузки.
-
----
-
-## Способ 1: Добавление новой команды в существующий пакет (Предпочтительный)
-
-Это самый частый сценарий. Допустим, мы хотим добавить в пакет `littletools_video` новую команду. В зависимости от сложности команды, есть два подхода.
-
-### Шаг 1: Выберите подход
-
--   **1A: Простая команда.** Если ваша команда — это одна-две простые функции, лучше добавить её в уже существующий основной файл пакета (например, `video_converter.py`).
--   **1B: Комплексная команда.** Если ваш инструмент — это самодостаточная программа со своей логикой, несколькими функциями и, возможно, специфичными зависимостями (как `ben2-remover`), лучше создать для него отдельный `.py` файл внутри пакета.
+-   **Caching:** Models are downloaded once and stored locally.
+-   **Centralized Management:** All models go through a single mechanism.
+-   **Reliability:** Less dependence on direct API calls from specific libraries for downloading.
 
 ---
 
-### Подход 1A: Простая команда (в существующем файле)
+## Method 1: Adding a New Command to an Existing Package (Preferred)
 
-Это самый быстрый способ.
+This is the most common scenario. Let's say we want to add a new command to the `littletools_video` package. Depending on the command's complexity, there are two approaches.
 
-1.  **Найдите целевой файл:** Перейдите в папку пакета, например, `littletools_video/littletools_video/`, и найдите файл, который содержит главный объект `typer.Typer`. Обычно он называется по имени основного инструмента, например `video_converter.py`.
+### Step 1: Choose an Approach
 
-2.  **Добавьте вашу команду:** Откройте этот файл и добавьте новую функцию, обернутую в декоратор `@app.command()`.
+-   **1A: Simple Command.** If your command is one or two simple functions, it's better to add it to the package's existing main file (e.g., `video_converter.py`).
+-   **1B: Complex Command.** If your tool is a self-contained program with its own logic, multiple functions, and possibly specific dependencies (like `ben2-remover`), it's better to create a separate `.py` file for it within the package.
+
+---
+
+### Approach 1A: Simple Command (in an existing file)
+
+This is the fastest method.
+
+1.  **Find the target file:** Go to the package folder, e.g., `littletools_video/littletools_video/`, and find the file containing the main `typer.Typer` object. It's usually named after the main tool, like `video_converter.py`.
+
+2.  **Add your command:** Open this file and add a new function wrapped in the `@app.command()` decorator.
 
 ```python
-// ... существующий код ...
+// ... existing code ...
 from rich.console import Console
 from typing_extensions import Annotated
 
-# * Главное приложение Typer для этого пакета уже должно быть определено
+# * The main Typer application for this package should already be defined
 # app = typer.Typer(...)
 
 console = Console()
 
-// ... существующие команды ...
+// ... existing commands ...
 
 @app.command()
 def add_watermark(
-    input_video: Annotated[Path, typer.Argument(help="Исходный видеофайл.")],
-    watermark_image: Annotated[Path, typer.Argument(help="Файл изображения для водяного знака.")],
-    output_video: Annotated[Path, typer.Option("--output", "-o", help="Путь для итогового видео.")]
+    input_video: Annotated[Path, typer.Argument(help="Source video file.")],
+    watermark_image: Annotated[Path, typer.Argument(help="Image file for the watermark.")],
+    output_video: Annotated[Path, typer.Option("--output", "-o", help="Path for the final video.")]
 ):
     """
-    Накладывает изображение водяного знака на видео.
+    Overlays a watermark image onto a video.
     """
-    console.print(f"Накладывание водяного знака [cyan]{watermark_image}[/cyan] на [cyan]{input_video}[/cyan]...")
+    console.print(f"Applying watermark [cyan]{watermark_image}[/cyan] to [cyan]{input_video}[/cyan]...")
 
-    # ? Используйте общие функции из этого же пакета, если они есть
-    # ? Например, из ffmpeg_utils.py
+    # ? Use common functions from this same package if they exist
+    # ? For example, from ffmpeg_utils.py
     #
-    # ? Также используйте утилиты из littletools_core
+    # ? Also, use utilities from littletools_core
     # from littletools_core.utils import some_helper_function
 
-    # TODO: Здесь должна быть ваша реальная логика с использованием FFMPEG.
+    # TODO: Your actual logic using FFMPEG should be here.
 
-    console.print(f"[green]✓ Видео сохранено в [bold]{output_video}[/bold]![/green]")
+    console.print(f"[green]✓ Video saved to [bold]{output_video}[/bold]![/green]")
 
 if __name__ == "__main__":
     app()
 ```
 
-3.  **Готово!** Поскольку пакет уже зарегистрирован в системе, вам больше ничего не нужно делать. Новая команда автоматически появится в меню.
+3.  **Done!** Since the package is already registered in the system, you don't need to do anything else. The new command will automatically appear in the menu.
 
 ---
 
-### Подход 1B: Комплексная команда (в новом файле)
+### Approach 1B: Complex Command (in a new file)
 
-Этот подход сохраняет чистоту кода, изолируя сложную логику.
+This approach keeps the code clean by isolating complex logic.
 
-1.  **Создайте файл инструмента:** Внутри папки с исходным кодом пакета (например, `littletools_video/littletools_video/`) создайте новый Python-файл, например `my_watermark_tool.py`.
+1.  **Create the tool file:** Inside the package's source code folder (e.g., `littletools_video/littletools_video/`), create a new Python file, for instance, `my_watermark_tool.py`.
 
-2.  **Напишите код инструмента:** В этом новом файле создайте полноценное Typer-приложение. Код будет очень похож на создание нового пакета, но файл будет находиться внутри уже существующего.
+2.  **Write the tool's code:** In this new file, create a complete Typer application. The code will be very similar to creating a new package, but the file will be located inside an existing one.
 
     ```python
     #!/usr/bin/env python3
@@ -127,140 +125,156 @@ if __name__ == "__main__":
     from rich.console import Console
     from typing_extensions import Annotated
 
-    # * Этот объект 'app' — то, на что мы будем ссылаться в pyproject.toml
+    # * This 'app' object is what we will reference in pyproject.toml
     app = typer.Typer(no_args_is_help=True)
     console = Console()
 
     @app.command()
     def apply(
-        # ... аргументы вашей функции ...
+        # ... your function arguments ...
     ):
-        """Накладывает водяной знак."""
-        # TODO: Логика вашей команды
-        console.print("[green]✓ Готово![/green]")
+        """Applies a watermark."""
+        # TODO: Your command logic
+        console.print("[green]✓ Done![/green]")
 
     if __name__ == "__main__":
         app()
     ```
 
-3.  **Зарегистрируйте команду:** Откройте файл `pyproject.toml` родительского пакета (в нашем примере — `littletools_video/pyproject.toml`). Вам нужно добавить ссылку на ваш новый инструмент в двух местах:
+3.  **Register the command:** Open the `pyproject.toml` file of the parent package (in our example, `littletools_video/pyproject.toml`). You need to add a reference to your new tool in two places:
 
-    -   `[project.scripts]`: Позволяет запускать скрипт напрямую из командной строки.
-    -   `[project.entry-points."littletools.commands"]`: Регистрирует команду в главном меню `lt`.
+    -   `[project.scripts]`: Allows running the script directly from the command line.
+    -   `[project.entry-points."littletools.commands"]`: Registers the command in the main `lt` menu.
 
     ```toml
     # littletools_video/pyproject.toml
 
-    # ... другие секции ...
+    # ... other sections ...
 
     [project.scripts]
-    # ... существующие скрипты ...
+    # ... existing scripts ...
     watermarker = "littletools_video.my_watermark_tool:app"
 
     [project.entry-points."littletools.commands"]
-    # ... существующие команды ...
+    # ... existing commands ...
     watermarker = "littletools_video.my_watermark_tool:app"
 
     # ...
     ```
 
-4.  **Готово!** Запустите `start.bat` или `start.ps1`. Поскольку вы изменили `pyproject.toml`, установщик перерегистрирует ваш пакет, и новая команда появится в меню. Вам **не нужно** редактировать `start.ps1`, так как родительский пакет `littletools_video` уже включен в установку.
+4.  **Check dependencies (if necessary):** If you added new imports to the `dependencies` section of `pyproject.toml`, verify their correctness:
+
+    ```bash
+    python requirementsBuilder.py littletools_video/littletools_video
+    ```
+
+5.  **Done!** Run `start.bat` or `start.ps1`. Since you modified `pyproject.toml`, the installer will re-register your package, and the new command will appear in the menu. You **do not need** to edit `start.ps1`, as the parent package `littletools_video` is already included in the installation.
 
 ---
 
-## Способ 2: Создание нового тематического пакета-инструмента
+## Method 2: Creating a New Thematic Tool Package
 
-Используйте этот способ, только если ваша новая функциональность не вписывается ни в один из существующих пакетов.
+Use this method only if your new functionality does not fit into any of the existing packages.
 
-Допустим, мы хотим создать новый инструмент под названием `archive` для работы с ZIP-файлами.
+Let's say we want to create a new tool called `archive` for working with ZIP files.
 
-### Шаг 1: Создайте структуру пакета
+### Step 1: Create the Package Structure
 
-1.  В корне проекта `LittleTools` создайте новую папку для вашего пакета. Соглашение об именовании — `littletools_themename`.
+1.  In the `LittleTools` project root, create a new folder for your package. The naming convention is `littletools_themename`.
 
     ```
     /littletools_archive
     ```
 
-2.  Внутри этой папки создайте еще одну папку с таким же названием. Здесь будет находиться ваш код на Python. Также создайте в ней пустой файл `__init__.py`.
+2.  Inside this folder, create another folder with the same name. This is where your Python code will reside. Also, create an empty `__init__.py` file inside it.
     ```
     /littletools_archive
         /littletools_archive
             __init__.py
     ```
 
-### Шаг 2: Создайте файл `pyproject.toml`
+### Step 2: Create the `pyproject.toml` File
 
-Это самый важный файл для интеграции. Создайте файл с именем `pyproject.toml` в папке верхнего уровня `littletools_archive`.
+This is the most important file for integration. Create a file named `pyproject.toml` in the top-level `littletools_archive` folder.
 
 ```
 /littletools_archive
-    pyproject.toml  <-- СОЗДАЙТЕ ЭТОТ ФАЙЛ
+    pyproject.toml  <-- CREATE THIS FILE
     /littletools_archive
 ```
 
-Скопируйте и вставьте этот шаблон в ваш `pyproject.toml` и измените выделенные секции:
+Copy and paste this template into your `pyproject.toml` and modify the highlighted sections:
 
-```toml
-[build-system]
-requires = ["setuptools>=61.0"]
-build-backend = "setuptools.build_meta"
+    ```toml
+    [build-system]
+    requires = ["setuptools>=61.0"]
+    build-backend = "setuptools.build_meta"
 
-[project]
-# --- 1. ИЗМЕНИТЕ ЭТО ---
-name = "littletools-archive"
-version = "0.1.0"
-description = "Инструмент для работы с архивами."
-# --------------------
+    [project]
+    # --- 1. CHANGE THIS ---
+    name = "littletools-archive"
+    version = "0.1.0"
+    description = "A tool for working with archives."
+    # --------------------
 
-dependencies = [
-    "littletools-core", # ! Важная зависимость от общих утилит ядра
-    "typer[all]>=0.9.0",
-    # Добавьте любые другие зависимости, необходимые вашему инструменту, например, "zipp"
-]
-requires-python = ">=3.8"
+    dependencies = [
+        "littletools-core", # ! Important dependency on core utilities
+        "typer[all]>=0.9.0",
+        "rich>=13.0.0", # ! Required for console.print() and rich output
+        # Add any other dependencies your tool needs, e.g., "zipfile36"
+    ]
+    requires-python = ">=3.8"
 
-# --- 2. ЭТО МАГИЯ ---
-# Эта секция сообщает главному меню, что данный пакет предоставляет команду.
+# --- 2. THIS IS THE MAGIC ---
+
+# This section tells the main menu that this package provides a command.
+
 [project.entry-points."littletools.commands"]
-# `archive` — это имя, которое появится в меню.
-# `littletools_archive.main:app` — указывает на объект `app` в файле `main.py`.
+
+# `archive` is the name that will appear in the menu.
+
+# `littletools_archive.main:app` points to the `app` object in the `main.py` file.
+
 archive = "littletools_archive.main:app"
+
 # --------------------------
 
 [tool.setuptools.packages.find]
 where = ["."]
-```
-
-### Шаг 3: Напишите код инструмента
-
-Теперь создайте файл Python, содержащий логику вашего инструмента. Согласно нашему `pyproject.toml`, этот файл должен называться `main.py`.
 
 ```
+
+### Step 3: Write the Tool's Code
+
+Now, create the Python file containing your tool's logic. According to our `pyproject.toml`, this file should be named `main.py`.
+
+```
+
 /littletools_archive
-    /littletools_archive
-        __init__.py
-        main.py  <-- СОЗДАЙТЕ ЭТОТ ФАЙЛ
-```
+/littletools_archive
+**init**.py
+main.py <-- CREATE THIS FILE
 
-Вот простой шаблон для `main.py` с использованием `typer` и стилем комментариев "Better Comments":
+````
+
+Here is a simple template for `main.py` using `typer` and "Better Comments" style:
 
 ```python
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Инструмент для архивации - часть набора LittleTools.
+Archiving tool - part of the LittleTools suite.
 """
 from pathlib import Path
 import typer
 from rich.console import Console
 from typing_extensions import Annotated
 
-# * Создаем приложение Typer для этого конкретного инструмента.
-# * Этот объект 'app' — то, на что ссылается точка входа в pyproject.toml.
+# * Create a Typer app for this specific tool.
+# * This 'app' object is what the entry point in pyproject.toml refers to.
 app = typer.Typer(
     name="archive",
-    help="Инструмент для создания и извлечения ZIP-архивов.",
+    help="A tool for creating and extracting ZIP archives.",
     no_args_is_help=True
 )
 
@@ -268,54 +282,78 @@ console = Console()
 
 @app.command()
 def create(
-    archive_path: Annotated[Path, typer.Option("--output", "-o", help="Путь для нового ZIP-файла.")],
-    files_to_add: Annotated[list[Path], typer.Argument(help="Файлы или папки для добавления в архив.")]
+    archive_path: Annotated[Path, typer.Option("--output", "-o", help="Path for the new ZIP file.")],
+    files_to_add: Annotated[list[Path], typer.Argument(help="Files or folders to add to the archive.")]
 ):
     """
-    Создает новый ZIP-архив из указанных файлов и папок.
+    Creates a new ZIP archive from the specified files and folders.
     """
-    console.print(f"Создание архива: [cyan]{archive_path}[/cyan]")
+    console.print(f"Creating archive: [cyan]{archive_path}[/cyan]")
     for file in files_to_add:
-        console.print(f"  -> Добавление [yellow]{file}[/yellow]...")
+        console.print(f"  -> Adding [yellow]{file}[/yellow]...")
 
-    # TODO: Здесь должна быть ваша реальная логика архивации.
+    # TODO: Your actual archiving logic should be here.
 
-    console.print("[green]✓ Архив успешно создан![/green]")
+    console.print("[green]✓ Archive created successfully![/green]")
 
 @app.command()
 def extract(
-    archive_path: Annotated[Path, typer.Argument(help="ZIP-файл для извлечения.")],
-    destination: Annotated[Path, typer.Option("--output", "-o", help="Папка для извлечения файлов.")]
+    archive_path: Annotated[Path, typer.Argument(help="ZIP file to extract.")],
+    destination: Annotated[Path, typer.Option("--output", "-o", help="Folder to extract files to.")]
 ):
     """
-    Извлекает ZIP-архив в папку назначения.
+    Extracts a ZIP archive to a destination folder.
     """
-    console.print(f"Извлечение [cyan]{archive_path}[/cyan] в [cyan]{destination}[/cyan]...")
+    console.print(f"Extracting [cyan]{archive_path}[/cyan] to [cyan]{destination}[/cyan]...")
 
-    # TODO: Здесь должна быть ваша реальная логика распаковки.
+    # TODO: Your actual extraction logic should be here.
 
-    console.print("[green]✓ Архив успешно извлечен![/green]")
+    console.print("[green]✓ Archive extracted successfully![/green]")
 
 if __name__ == "__main__":
     app()
-```
+````
 
-### Шаг 4: Добавьте инструмент в установщик
+### Step 4: Add the Tool to the Installer
 
-Последний шаг — сообщить основному скрипту установки, что нужно установить ваш новый пакет.
+The final step is to tell the main installation script to install your new package.
 
-1.  Откройте `start.ps1`.
-2.  Найдите строку, которая начинается с `& $VenvPython -m pip install ...`.
-3.  Добавьте `-e ./littletools_archive` в конец этой строки. Она должна выглядеть так:
+1.  Open `start.ps1`.
+2.  Find the line that starts with `& $VenvPython -m pip install ...`.
+3.  Add `-e ./littletools_archive` to the end of this line. It should look like this:
 
     ```powershell
-    # Было
+    # Was
     & $VenvPython -m pip install -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video
 
-    # Стало
+    # Becomes
     & $VenvPython -m pip install -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video -e ./littletools_archive
     ```
 
-### Шаг 5: Запустите установщик
+### Step 5: Check Dependencies (Recommended)
 
-Вот и все! Теперь просто запустите `start.bat` или `start.ps1` из корня проекта. Скрипт найдет ваш новый пакет `littletools_archive`, установит его, и когда запустится интерактивное меню, вы увидите "**archive**" как новую, полностью функционирующую опцию.
+Before the final installation, it's recommended to verify the correctness of your dependencies using the built-in analyzer:
+
+```bash
+# Check which dependencies are actually used in your code
+python requirementsBuilder.py littletools_archive/littletools_archive
+
+# For a detailed analysis with files and line numbers
+python requirementsBuilder.py littletools_archive/littletools_archive --detailed
+```
+
+**Analyze the results:**
+
+-   ✅ **All dependencies from the output should be in `pyproject.toml`**
+-   ❌ **Dependencies in `pyproject.toml` but NOT in the output = potentially redundant**
+-   ⚠️ **Dependencies in the output but NOT in `pyproject.toml` = missing (add them)**
+
+**Typical dependencies for LittleTools:**
+
+-   `typer[all]>=0.9.0` - always needed for the CLI
+-   `rich>=13.0.0` - always needed for `console.print()`
+-   `littletools-core` - always needed for common utilities
+
+### Step 6: Run the Installer
+
+That's it! Now just run `start.bat` or `start.ps1` from the project root. The script will find your new `littletools_archive` package, install it, and when the interactive menu launches, you will see "**archive**" as a new, fully functional option.

@@ -1,78 +1,107 @@
-# Как удалять инструменты из LittleTools
+# How to Remove Tools from LittleTools
 
-Это руководство объясняет, как удалять существующие инструменты из набора LittleTools. Процесс удаления всегда состоит из двух основных шагов:
+This guide explains how to remove existing tools from the LittleTools suite. The removal process always consists of two main steps:
 
-1.  **Дерегистрация инструмента:** Удаление записи о нем из конфигурационных файлов.
-2.  **Удаление исходного кода:** Удаление файлов или фрагментов кода, реализующих инструмент.
-
----
-
-## Шаг 1: Определите, как инструмент интегрирован
-
-Прежде чем что-то удалять, нужно понять, как инструмент был добавлен. Откройте `Docs/ADDING_NEW_TOOLS.md` и сопоставьте ваш случай с одним из сценариев:
-
--   **Сценарий 1A: Простая команда в существующем файле.** Функция `@app.command()` добавлена в общий файл типа `video_converter.py`.
--   **Сценарий 1B: Комплексная команда в новом файле.** Был создан отдельный файл `.py` внутри пакета (как `ben2_remover.py`) и прописан в `pyproject.toml` этого пакета.
--   **Сценарий 2: Целый пакет-инструмент.** Была создана целая директория `littletools_themename` и добавлена в `start.ps1`.
-
-## Шаг 2: Выполните удаление согласно сценарию
-
-### Удаление по сценарию 1A (Простая команда)
-
-Это самый легкий случай.
-
-1.  **Найдите файл:** Перейдите в папку пакета (например, `littletools_video/littletools_video/`) и откройте файл, содержащий вашу команду (например, `video_converter.py`).
-2.  **Удалите код:** Найдите и полностью удалите функцию Python, реализующую команду (блок кода, начинающийся с `@app.command()`).
-
-Вот и все! Никаких других правок не требуется.
-
-### Удаление по сценарию 1B (Комплексная команда)
-
-Здесь на один шаг больше.
-
-1.  **Дерегистрация:** Откройте `pyproject.toml` пакета, в котором находится инструмент (например, `littletools_video/pyproject.toml`).
-    -   Найдите секцию `[project.entry-points."littletools.commands"]` и удалите строку, относящуюся к вашему инструменту.
-    -   Найдите секцию `[project.scripts]` и также удалите оттуда соответствующую строку.
-    -   Если для этого инструмента добавлялись специфичные зависимости в секцию `dependencies`, удалите их, чтобы не хранить лишнего.
-2.  **Удаление файла:** Удалите сам файл `.py` с кодом инструмента (например, `littletools_video/littletools_video/my_watermark_tool.py`).
-3.  **(Обязательно) Проверка и очистка зависимостей:** После удаления кода обязательно проверьте `pyproject.toml` на наличие "осиротевших" зависимостей. См. секцию "Очистка неиспользуемых зависимостей" ниже.
-
-После этого запустите `start.bat` или `start.ps1`, чтобы изменения вступили в силу.
-
-### Удаление по сценарию 2 (Целый пакет)
-
-Это полное удаление целой категории инструментов.
-
-1.  **Дерегистрация пакета:**
-    -   Откройте `start.ps1` в корне проекта.
-    -   Найдите строку `& $VenvPython -m pip install ...`.
-    -   Удалите из этой строки флаг для вашего пакета (например, `-e ./littletools_archive`).
-2.  **Удаление папки:** Полностью удалите директорию вашего пакета (например, `littletools_archive`).
-3.  **(Рекомендуется) Очистка окружения:** Удалите папку `.venv` и запустите `start.bat` или `start.ps1`, чтобы пересобрать окружение с чистого листа.
+1.  **Deregistering the tool:** Removing its entry from configuration files.
+2.  **Deleting the source code:** Removing the files or code snippets that implement the tool.
 
 ---
 
-## Очистка неиспользуемых зависимостей (Важный шаг!)
+## Step 1: Determine How the Tool is Integrated
 
-После удаления кода из пакета (особенно по сценариям 1B и 2) крайне важно проверить, не остались ли в `pyproject.toml` зависимости, которые больше не используются.
+Before deleting anything, you need to understand how the tool was added. Open `Docs/ADDING_NEW_TOOLS.md` and match your case with one of the scenarios:
 
-1.  **Сгенерируйте актуальные зависимости:** Запустите из корня проекта скрипт `requirementsBuilder.py`, указав ему путь к исходникам вашего пакета.
+-   **Scenario 1A: Simple command in an existing file.** A `@app.command()` function was added to a shared file like `video_converter.py`.
+-   **Scenario 1B: Complex command in a new file.** A separate `.py` file was created within a package (like `ben2_remover.py`) and registered in that package's `pyproject.toml`.
+-   **Scenario 2: An entire tool package.** A whole `littletools_themename` directory was created and added to `start.ps1`.
+
+## Step 2: Perform Removal According to the Scenario
+
+### Removing by Scenario 1A (Simple Command)
+
+This is the easiest case.
+
+1.  **Find the file:** Go to the package folder (e.g., `littletools_video/littletools_video/`) and open the file containing your command (e.g., `video_converter.py`).
+2.  **Delete the code:** Find and completely remove the Python function that implements the command (the code block starting with `@app.command()`).
+
+That's it! No other edits are required.
+
+### Removing by Scenario 1B (Complex Command)
+
+This requires one more step.
+
+1.  **Deregister:** Open the `pyproject.toml` of the package containing the tool (e.g., `littletools_video/pyproject.toml`).
+    -   Find the `[project.entry-points."littletools.commands"]` section and delete the line related to your tool.
+    -   Find the `[project.scripts]` section and also delete the corresponding line from there.
+    -   If specific dependencies were added for this tool in the `dependencies` section, remove them to avoid keeping unnecessary clutter.
+2.  **Delete the file:** Delete the `.py` file with the tool's code (e.g., `littletools_video/littletools_video/my_watermark_tool.py`).
+3.  **(Mandatory) Check and clean dependencies:** After deleting the code, be sure to check the `pyproject.toml` for "orphaned" dependencies. See the "Cleaning Up Unused Dependencies" section below.
+
+After this, run `start.bat` or `start.ps1` for the changes to take effect.
+
+### Removing by Scenario 2 (Entire Package)
+
+This is the complete removal of an entire category of tools.
+
+1.  **Deregister the package:**
+    -   Open `start.ps1` in the project root.
+    -   Find the `& $VenvPython -m pip install ...` line.
+    -   Remove the flag for your package from this line (e.g., `-e ./littletools_archive`).
+2.  **Delete the folder:** Completely delete your package directory (e.g., `littletools_archive`).
+3.  **(Recommended) Clean the environment:** Delete the `.venv` folder and run `start.bat` or `start.ps1` to rebuild the environment from scratch.
+
+---
+
+## Cleaning Up Unused Dependencies (A Critically Important Step!)
+
+After removing code from a package (especially under scenarios 1B and 2), you **MUST** check if any dependencies that are no longer used remain in `pyproject.toml`. **DO NOT REMOVE dependencies manually** - this can lead to errors.
+
+### The Correct Process for Cleaning Dependencies:
+
+1.  **Generate current dependencies:** Run the improved `requirementsBuilder.py` script from the project root:
 
     ```bash
-    # Замените <path-to-package-source> на актуальный путь
-    # например, littletools_video/littletools_video
-    python requirementsBuilder.py -d <path-to-package-source>
+    # Basic analysis (recommended to start)
+    python requirementsBuilder.py <path-to-package-source>
+
+    # Detailed analysis with file and line numbers of imports
+    python requirementsBuilder.py <path-to-package-source> --detailed
+
+    # Example:
+    python requirementsBuilder.py littletools_video/littletools_video --detailed
     ```
 
-    Когда скрипт спросит, создавать ли `.gitignore` или устанавливать ли пакеты, можно ответить `n` (нет). Он создаст в указанной папке файл `requirements.txt`.
+    **Advantages of the improved builder:**
 
-2.  **Сравните списки:**
+    -   ✅ Excludes standard Python libraries and local project packages
+    -   ✅ Shows the files and lines where each dependency is used
+    -   ✅ Finds missing dependencies (used but not listed in pyproject.toml)
+    -   ✅ Provides clearly structured output with instructions
 
-    -   Откройте созданный `requirements.txt`. В нем перечислены модули, которые _действительно_ импортируются в коде.
-    -   Откройте `pyproject.toml` вашего пакета и посмотрите на список `dependencies`.
+2.  **Compare the lists:**
 
-3.  **Удалите лишнее:** Если в `pyproject.toml` есть зависимость, которой нет в `requirements.txt`, и вы уверены, что она больше не нужна ни одному из оставшихся инструментов в пакете, — смело удаляйте её строку из `pyproject.toml`.
+    -   Analyze the output of `requirementsBuilder.py` - it lists the modules that are _actually_ imported in the code.
+    -   Open your package's `pyproject.toml` and look at the `dependencies` list.
+    -   **Special attention:** Some dependencies might be imported only inside functions or conditionally, so double-check with a grep search.
 
-> **? Примечание:** Скрипт `requirementsBuilder.py` не идеален и может не увидеть некоторые динамические импорты. Однако он отлично подходит для обнаружения очевидных "сирот", таких как `torch` или `ben2` после удаления использовавшего их кода.
+3.  **Make informed decisions:**
 
-После выполнения этих шагов инструмент будет полностью удален из проекта.
+    -   ✅ **Safe to remove:** Dependencies that do not appear in the output of `requirementsBuilder.py` or in the grep search results.
+    -   ⚠️ **Double-check:** Dependencies that are in `requirementsBuilder.py` but seem specific to the removed tool.
+    -   ❌ **DO NOT remove:** Dependencies that are used by the remaining tools in the package.
+
+4.  **Example Analysis:**
+
+    ```
+    requirementsBuilder.py showed: PIL, controlnet_aux, cv2, diffusers, numpy, realesrgan, rich, torch, torchvision, typer
+    In pyproject.toml there are: Pillow, typer, tqdm, opencv-python, diffusers, transformers, torch, torchvision, accelerate, realesrgan, basicsr, xformers, controlnet-aux, compel, invisible-watermark
+
+    Decisions:
+    ✅ Add: rich (used, but missing from pyproject.toml)
+    ✅ Remove: tqdm (not used in this package)
+    ✅ Keep: all Stable Diffusion dependencies (used in stable_diffusion_stylizer.py)
+    ```
+
+> **! Critical Warning:** The `requirementsBuilder.py` script is not perfect and may not see some dynamic or conditional imports. Always double-check with a grep search and analyze the code manually before removing dependencies. It is better to leave an extra dependency than to break working code.
+
+After following these steps, the tool will be completely removed from the project.

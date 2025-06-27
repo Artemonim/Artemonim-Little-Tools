@@ -22,7 +22,8 @@ dependencies = [
     "openai-whisper @ git+https://github.com/openai/whisper.git",
     "ffmpeg-python>=0.2.0",
     "typer[all]>=0.9.0",
-    "tqdm",
+    "tqdm>=4.66.1",
+    "rich>=13.0.0",
 ]
 
 [project.scripts]

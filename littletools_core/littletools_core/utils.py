@@ -560,10 +560,10 @@ async def run_tasks_with_semaphore(
         return
 
     running_tasks = [asyncio.create_task(run_task(task)) for task in tasks]
-    
+
     # gather() is awaitable itself, no need to wrap in a task.
     gather_future = asyncio.gather(*running_tasks)
-    
+
     # Create a task that waits for the stop event.
     stop_task = asyncio.create_task(stop_event.wait())
 
@@ -577,7 +577,7 @@ async def run_tasks_with_semaphore(
         if stop_task in done:
             # Cancel the future, which will propagate cancellation to its children.
             gather_future.cancel()
-        
+
         # If the gather_future finished, we no longer need the stop_task.
         if gather_future in done:
             stop_task.cancel()

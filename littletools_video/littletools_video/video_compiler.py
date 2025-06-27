@@ -32,7 +32,7 @@ from littletools_video.ffmpeg_utils import get_video_duration
 from littletools_video.ffmpeg_utils import run_ffmpeg_command
 
 app = typer.Typer(
-    name="topaz-merger",
+    name="video-compiler",
     help="Merge Topaz-processed video with original audio/subtitles.",
     no_args_is_help=True,
 )

@@ -31,7 +31,7 @@ from littletools_video.ffmpeg_utils import setup_signal_handlers
 from littletools_video.ffmpeg_utils import standard_main
 
 app = typer.Typer(
-    name="ffmpeg-normalizer",
+    name="audio-normalizer",
     help="Normalize audio tracks in MKV files using FFmpeg (processes a directory).",
     no_args_is_help=True,
 )

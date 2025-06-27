@@ -40,16 +40,16 @@ dependencies = [
 xformers = ["xformers>=0.0.20"]
 
 [project.scripts]
-ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:main"
-topaz-merger = "littletools_video.Topaz_Video_Merger:main"
+audio-normalizer = "littletools_video.audio_normalizer:main"
+video-compiler = "littletools_video.video_compiler:main"
 video-converter = "littletools_video.video_converter:main"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:main"
 video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 
 [project.entry-points."littletools.commands"]
 video-converter = "littletools_video.video_converter:app"
-ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:app"
-topaz-merger = "littletools_video.Topaz_Video_Merger:app"
+audio-normalizer = "littletools_video.audio_normalizer:app"
+video-compiler = "littletools_video.video_compiler:app"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:app"
 video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 

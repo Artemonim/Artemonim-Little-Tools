@@ -172,6 +172,15 @@ This approach keeps the code clean by isolating complex logic.
 
 ---
 
+### A Note on Dependency Versioning
+
+To avoid dependency conflicts within the LittleTools shared environment, it is highly recommended to follow these guidelines:
+
+-   **Prefer flexible specifiers:** Avoid pinning exact versions (`requests==2.28.0`). Instead, use flexible specifiers like `>=` (minimum version) or `~=` (compatible release). For example, `requests>=2.28.0`. This allows `pip` more flexibility to find a set of packages that works for all tools.
+-   **Use strict pinning only when necessary:** Pin an exact version only if you know that your tool is incompatible with newer versions of a dependency. If you do so, add a comment in `pyproject.toml` explaining why the strict version is required.
+
+---
+
 ## Method 2: Creating a New Thematic Tool Package
 
 Use this method only if your new functionality does not fit into any of the existing packages.

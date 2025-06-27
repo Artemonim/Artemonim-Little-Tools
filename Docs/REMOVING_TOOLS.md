@@ -35,9 +35,7 @@ This requires one more step.
     -   Find the `[project.scripts]` section and also delete the corresponding line from there.
     -   If specific dependencies were added for this tool in the `dependencies` section, remove them to avoid keeping unnecessary clutter.
 2.  **Delete the file:** Delete the `.py` file with the tool's code (e.g., `littletools_video/littletools_video/my_watermark_tool.py`).
-3.  **(Mandatory) Check and clean dependencies:** After deleting the code, be sure to check the `pyproject.toml` for "orphaned" dependencies. See the "Cleaning Up Unused Dependencies" section below.
-
-After this, run `start.bat` or `start.ps1` for the changes to take effect.
+3.  **(Mandatory) Relaunch the installer:** Run `start.bat` or `start.ps1` and select option **[1] Install or Update All Tools**. The updated script will automatically detect and remove the orphaned packages that are no longer needed.
 
 ### Removing by Scenario 2 (Entire Package)
 
@@ -48,13 +46,17 @@ This is the complete removal of an entire category of tools.
     -   Find the `& $VenvPython -m pip install ...` line.
     -   Remove the flag for your package from this line (e.g., `-e ./littletools_archive`).
 2.  **Delete the folder:** Completely delete your package directory (e.g., `littletools_archive`).
-3.  **(Recommended) Clean the environment:** Delete the `.venv` folder and run `start.bat` or `start.ps1` to rebuild the environment from scratch.
+3.  **(Mandatory) Clean the environment:** Run `start.bat` or `start.ps1` and select option **[1] Install or Update All Tools**. The script will automatically uninstall all packages related to the tool you removed.
 
 ---
 
 ## Cleaning Up Unused Dependencies (A Critically Important Step!)
 
-After removing code from a package (especially under scenarios 1B and 2), you **MUST** check if any dependencies that are no longer used remain in `pyproject.toml`. **DO NOT REMOVE dependencies manually** - this can lead to errors.
+After removing code from a package (especially under scenarios 1B and 2), you **MUST** ensure that no unused dependencies remain in `pyproject.toml`. Keeping this file clean is important for project maintainability.
+
+> **! Note on Automatic Cleanup:** The main installation script (`start.ps1`) has been updated to **automatically remove orphaned packages** from your virtual environment when you run **[1] Install or Update All Tools**.
+>
+> The following steps are for cleaning up the `pyproject.toml` configuration file itself, which is still a recommended practice.
 
 ### The Correct Process for Cleaning Dependencies:
 

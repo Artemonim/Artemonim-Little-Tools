@@ -122,44 +122,92 @@ function Install-Environment {
     Write-Host "* Installing/updating all LittleTools packages..." -ForegroundColor Yellow
     Write-Host "  This can take a few minutes if new dependencies (like torch) are being downloaded."
     try {
-        & $VenvPaths.Python -m pip install --upgrade pip
-        
-        # * Check for NVIDIA GPU and install appropriate PyTorch version
-        Write-Host "* Detecting GPU and installing PyTorch with CUDA support..." -ForegroundColor Yellow
-        
-        # Check if nvidia-smi is available (indicates NVIDIA GPU presence)
+        # * Use pip-tools for robust dependency management (install, update, and removal of orphans)
+        & $VenvPaths.Python -m pip install --upgrade pip pip-tools
+        if ($LASTEXITCODE -ne 0) { throw "Failed to install pip-tools." }
+
+        # * Dynamically build a requirements.in file
+        $Requirements = [System.Collections.Generic.List[string]]::new()
+        $Requirements.Add("-e ./littletools_cli")
+        $Requirements.Add("-e ./littletools_core")
+        $Requirements.Add("-e ./littletools_speech")
+        $Requirements.Add("-e ./littletools_txt")
+        $Requirements.Add("-e ./littletools_video")
+        # * Note: AgentDocstringsGenerator path might need adjustment if script is moved
+        $ParentDir = Split-Path $PSScriptRoot -Parent
+        $AgentDocstringsGeneratorPath = Join-Path $ParentDir "AgentDocstringsGenerator"
+        if (Test-Path $AgentDocstringsGeneratorPath) {
+            $AgentUri = "file:///" + ($AgentDocstringsGeneratorPath -replace "\\", "/")
+            $Requirements.Add("-e $AgentUri")
+        }
+
+        # * [Hygiene Check] Ensure setuptools is not a runtime dependency
+        $ProjectTomlFiles = Get-ChildItem -Path $PSScriptRoot -Recurse -Filter "pyproject.toml" | Where-Object { $_.FullName -notlike "*\.venv\*" }
+        foreach ($tomlFile in $ProjectTomlFiles) {
+            $content = Get-Content $tomlFile.FullName -Raw
+            # * Look for an exact match for "setuptools" as a dependency to avoid false positives on e.g. "types-setuptools"
+            if ($content -match '(?m)^\s*dependencies\s*=\s*\[[^\]]*"setuptools([>=<~\s\d\.]*)?"') {
+                Write-Host "  ! WARNING: Found 'setuptools' as a runtime dependency in $($tomlFile.FullName)." -ForegroundColor Yellow
+                Write-Host "    'setuptools' should only be in [build-system], not [project.dependencies]." -ForegroundColor Yellow
+            }
+        }
+
+        # * Determine PyTorch and optional xformers requirements
+        Write-Host "* Determining PyTorch package list..." -ForegroundColor Yellow
+        $TorchPackages = @()
+        $PipCompileIndexArgs = ""
         $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
         if ($NvidiaSmi) {
             try {
                 $NvidiaOutput = & nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>$null
                 if ($LASTEXITCODE -eq 0 -and $NvidiaOutput) {
-                    Write-Host "  ✓ NVIDIA GPU detected. Installing PyTorch with CUDA 12.1 and xformers..." -ForegroundColor Green
-                    # * Install PyTorch, its ecosystem, and xformers in a single command for proper dependency resolution.
-                    & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio xformers --index-url https://download.pytorch.org/whl/cu121
-                    if ($LASTEXITCODE -ne 0) { 
-                        Write-Host "  ! Failed to install CUDA PyTorch with xformers. Falling back to CPU version..." -ForegroundColor Yellow
-                        & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio
-                    } else {
-                        Write-Host "  ✓ PyTorch with CUDA and xformers support installed successfully." -ForegroundColor Green
-                    }
+                    Write-Host "  ✓ NVIDIA GPU detected. Including xformers with CUDA support." -ForegroundColor Green
+                    $TorchPackages = @("torch", "torchvision", "torchaudio", "xformers")
+                    $PipCompileIndexArgs = "--index-url https://download.pytorch.org/whl/cu121"
                 } else {
-                    Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. Installing CPU-only PyTorch..." -ForegroundColor Yellow
-                    & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio
+                    Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+                    $TorchPackages = @("torch", "torchvision", "torchaudio")
                 }
             } catch {
-                Write-Host "  ! Error checking GPU. Installing CPU-only PyTorch..." -ForegroundColor Yellow
-                & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio
+                Write-Host "  ! Error checking GPU. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+                $TorchPackages = @("torch", "torchvision", "torchaudio")
             }
         } else {
-            Write-Host "  - nvidia-smi not found. Installing CPU-only PyTorch..." -ForegroundColor Yellow
-            & $VenvPaths.Python -m pip install --upgrade torch torchvision torchaudio
+            Write-Host "  - nvidia-smi not found. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+            $TorchPackages = @("torch", "torchvision", "torchaudio")
         }
+        # * Add PyTorch and related packages
+        foreach ($pkg in $TorchPackages) {
+            $Requirements.Add($pkg)
+        }
+
+        # * Define temporary file paths
+        $ReqsInFile = Join-Path $PSScriptRoot "temp-requirements.in"
+        $ReqsTxtFile = Join-Path $PSScriptRoot "requirements.txt" # This will be our lock file
+
+        # * Write requirements to a temporary .in file
+        $Requirements | Out-File -FilePath $ReqsInFile -Encoding utf8
+
+        # * Compile the lock file. This is where dependency conflicts are detected.
+        Write-Host "* Resolving all project dependencies..." -ForegroundColor Yellow
+        $PipCompileExtraArgs = @()
+        if ($PipCompileIndexArgs -ne "") {
+            # Use extra-index-url so default PyPI is preserved and CUDA index is added
+            $PipCompileExtraArgs = @('--pip-args', "--extra-index-url https://download.pytorch.org/whl/cu121")
+        }
+        & $VenvPaths.Python -m piptools compile @PipCompileExtraArgs --output-file $ReqsTxtFile $ReqsInFile -v
+        if ($LASTEXITCODE -ne 0) { throw "Failed to resolve dependencies. Check for conflicts." }
+        Write-Host "  ✓ Dependencies resolved successfully." -ForegroundColor Green
         
-        # * Install all LittleTools packages
-        & $VenvPaths.Python -m pip install --upgrade -e ./littletools_cli -e ./littletools_core -e ./littletools_speech -e ./littletools_txt -e ./littletools_video -e "$PSScriptRoot\..\AgentDocstringsGenerator"
-        if ($LASTEXITCODE -ne 0) { throw "Failed to install one or more packages." }
+        # * Sync the environment. This adds, updates, AND removes packages to match the lock file.
+        Write-Host "* Synchronizing virtual environment... (This may take a while)" -ForegroundColor Yellow
+        & $VenvPaths.Python -m piptools sync $ReqsTxtFile
+        if ($LASTEXITCODE -ne 0) { throw "Failed to synchronize environment." }
         Write-Host "  ✓ All packages installed and up-to-date." -ForegroundColor Green
         
+        # * Clean up temporary .in file
+        Remove-Item $ReqsInFile -ErrorAction SilentlyContinue
+
         # * Verify CUDA availability for tools that require it
         Write-Host "* Verifying PyTorch CUDA installation..." -ForegroundColor Yellow
         $CudaCheck = & $VenvPaths.Python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('PyTorch version:', torch.__version__)" 2>$null

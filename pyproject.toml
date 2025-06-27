@@ -21,18 +21,6 @@ dependencies = [
     # * NPX is handled externally for pyright
 ]
 
-[tool.setuptools]
-packages = [
-    "littletools_cli",
-    "littletools_core",
-    "littletools_speech",
-    "littletools_txt",
-    "littletools_video",
-]
-
-[tool.setuptools.packages.find]
-where = ["."]
-
 [tool.pyright]
 # * Help Pylance/Pyright find packages in this monorepo
 # * This is necessary because of the editable installs of local packages.

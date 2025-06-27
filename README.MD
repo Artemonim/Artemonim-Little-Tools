@@ -1,10 +1,13 @@
 # LittleTools
 
-A modular and extensible suite of command-line utilities designed for various media, text, and AI-driven processing tasks. The project is built with a plugin-based architecture, making it easy to add, remove, or develop new tools.
+A cross-platform, modular and extensible suite of command-line utilities designed for various media, text, and AI-driven processing tasks. The project runs on Windows, Linux, and macOS, and is built with a plugin-based architecture, making it easy to add, remove, or develop new tools.
 
 ## Key Features
 
--   **Interactive Launcher**: A user-friendly PowerShell script (`start.ps1`) simplifies setup, installation, updates, and launching the main CLI.
+-   **Cross-Platform Interactive Launcher**: User-friendly setup scripts for all major platforms:
+    -   **Windows**: PowerShell script (`start.ps1`)
+    -   **Linux/macOS**: Bash script (`start.sh`)
+    -   Both scripts provide identical functionality for setup, installation, updates, and launching the main CLI.
 -   **Robust Dependency Management**: Utilizes `pip-tools` to compile a single `requirements.txt` lock file from all constituent packages. This prevents dependency conflicts and ensures a reproducible environment.
 -   **Modular Architecture**: Tools are packaged as separate plugins (e.g., `littletools-video`, `littletools-txt`) and are automatically discovered by the main menu, thanks to Python's entry points.
 -   **GPU Acceleration**: Automatically detects NVIDIA GPUs and installs the appropriate CUDA-enabled versions of PyTorch and xformers for performance-critical tasks.
@@ -13,8 +16,10 @@ A modular and extensible suite of command-line utilities designed for various me
 ## Prerequisites
 
 -   **Python**: Version 3.11 is required. The setup script will look for it.
--   **PowerShell**: The `start.ps1` script is the primary entry point.
--   **NVIDIA GPU (Optional)**: For tools that leverage machine learning models (like Stable Diffusion or Whisper), an NVIDIA GPU with up-to-date drivers is highly recommended for acceptable performance. The installer will fall back to CPU-only packages if a GPU is not detected.
+-   **Shell Environment**:
+    -   **Windows**: PowerShell (the `start.ps1` script is the primary entry point)
+    -   **Linux/macOS**: Bash (the `start.sh` script provides the same functionality)
+-   **Modern NVIDIA GPU** for tools that leverage machine learning models
 
 ## Installation & Usage
 
@@ -26,10 +31,17 @@ A modular and extensible suite of command-line utilities designed for various me
     ```
 
 2. **Run the launcher script:**
-   Open a PowerShell terminal and run:
+
+    **On Windows (PowerShell):**
 
     ```powershell
     ./start.ps1
+    ```
+
+    **On Linux/macOS (Terminal):**
+
+    ```bash
+    ./start.sh
     ```
 
     This will present the main setup menu:

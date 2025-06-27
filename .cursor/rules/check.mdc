@@ -23,3 +23,5 @@ LittleTools Code Quality Checker
     python check.py                                    # Проверить весь проект с автофиксом
     python check.py --path myfile.py                   # Проверить только myfile.py
     python check.py --path src/ tests/                 # Проверить только указанные директории
+
+Точечно проверяй изменённые тобой файлы перед отчётом о проделанной работе.

@@ -32,39 +32,6 @@ dependencies = [
     "controlnet-aux>=0.0.10",
     "compel>=2.0.0",
     "invisible-watermark>=0.2.0",
-    # MatAnyone dependencies
-    "cython",
-    "gitpython>=3.1",
-    "hickle>=5.0",
-    "tensorboard>=2.11",
-    "numpy>=1.21,<2.0",
-    "scipy>=1.7",
-    "pycocotools>=2.0.7",
-    "gradio==4.44.1",
-    "gdown>=4.7.1",
-    "einops>=0.6",
-    "hydra-core>=1.3.2",
-    "PySide6>=6.2.0",
-    "charset-normalizer>=3.1.0",
-    "netifaces>=0.11.0",
-    "easydict",
-    "av>=0.5.2",
-    "requests",
-    "pyqtdarktheme",
-    "imageio==2.25.0",
-    "imageio[ffmpeg]",
-    "huggingface_hub",
-    "safetensors",
-    "progressbar2",
-    "fastapi==0.111.0",
-    "pydantic==2.7.1",
-    "matplotlib",
-    "pyyaml",
-    "openmim",
-    "psutil",
-    "ffmpeg-python>=0.2.0",
-    "thinplate @ git+https://github.com/cheind/py-thin-plate-spline",
-    "segment-anything @ git+https://github.com/facebookresearch/segment-anything.git",
 
 ]
 
@@ -77,7 +44,6 @@ ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:main"
 topaz-merger = "littletools_video.Topaz_Video_Merger:main"
 video-converter = "littletools_video.video_converter:main"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:main"
-mat-anyone = "littletools_video.mat_anyone_launcher:app"
 video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 
 [project.entry-points."littletools.commands"]
@@ -85,7 +51,6 @@ video-converter = "littletools_video.video_converter:app"
 ffmpeg-normalizer = "littletools_video.FFMPEG_MKV_audio_normalizer:app"
 topaz-merger = "littletools_video.Topaz_Video_Merger:app"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:app"
-mat-anyone = "littletools_video.mat_anyone_launcher:app"
 video-stylizer = "littletools_video.stable_diffusion_stylizer:app"
 
 [tool.setuptools.packages.find]

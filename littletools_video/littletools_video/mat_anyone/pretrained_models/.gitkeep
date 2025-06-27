@@ -1,3 +1,0 @@
-# This file ensures the pretrained_models directory exists in git
-# The actual .pth model files are excluded via .gitignore due to their large size (2.5GB+ total)
-# Models are automatically downloaded when MatAnyone is first launched 

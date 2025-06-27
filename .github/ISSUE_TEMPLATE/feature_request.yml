@@ -1,0 +1,172 @@
+name: Feature Request
+description: Suggest a new feature or enhancement for LittleTools
+title: "[FEATURE] "
+labels: ["🪲 enhancement", "🤓 Check me"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new feature! Please provide as much detail as possible to help us understand your request. You can fill it in English or Russian.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      description: Please confirm you have completed these steps
+      options:
+        - label: I have read the [README.md](../README.md)
+          required: true
+        - label: I am using the latest version of LittleTools
+          required: true
+        - label: I have searched for existing issues to see if this feature has been requested before
+          required: true
+        - label: This feature request is not a bug report (use Bug Report template for bugs)
+          required: true
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature Category
+      description: Which category does this feature belong to?
+      options:
+        - New Tool (completely new functionality)
+        - Enhancement to existing tool
+        - User Interface/Experience improvement
+        - Performance optimization
+        - Installation/Setup improvement
+        - Documentation improvement
+        - Developer/API enhancement
+        - Other
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: tool
+    attributes:
+      label: Related Tool/Component
+      description: If this is an enhancement, which component would it affect?
+      options:
+        - label: littletools-video (video processing tools)
+        - label: littletools-txt (text processing tools)
+        - label: littletools-speech (speech/audio tools)
+        - label: littletools-cli (main menu system)
+        - label: littletools-core (core utilities)
+        - label: Setup/Installation (starting script)
+        - label: Documentation
+        - label: New tool category
+        - label: GitHub
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Feature Summary
+      description: A brief, clear summary of the feature you'd like to see
+      placeholder: "Add support for...", "Improve performance of...", "Create new tool for..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem Statement
+      description: What problem does this feature solve? What use case does it address?
+      placeholder: |
+        Describe the problem or limitation you're experiencing:
+        - What are you trying to accomplish?
+        - What current workflow is inefficient or impossible?
+        - How does this impact your work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe your ideal solution in detail
+      placeholder: |
+        Describe how you envision this feature working:
+        - What would the user interface look like?
+        - What commands or options would be available?
+        - How would it integrate with existing tools?
+        - What would the typical workflow be?
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternative Solutions
+      description: Have you considered any alternative approaches or workarounds?
+      placeholder: |
+        - Other ways this could be implemented
+        - Existing tools or workarounds you've tried
+        - Why those alternatives are not sufficient
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority Level
+      description: How important is this feature to you?
+      options:
+        - Critical - Blocking my work completely
+        - High - Would significantly improve my workflow
+        - Medium - Would be nice to have
+        - Low - Minor convenience improvement
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: complexity
+    attributes:
+      label: Implementation Complexity
+      description: How complex do you think this would be?
+      options:
+        - label: 🤔 Simple - Minor change or addition
+        - label: 😑 Moderate - Requires some new code/logic
+        - label: 🫠 Complex - Major feature requiring significant development
+        - label: 😎 I don't know
+    validations:
+      required: true
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Usage Examples
+      description: Provide specific examples of how this feature would be used
+      placeholder: |
+        1. Caption in the main menu
+        2. Operating modes
+        3. Settings
+        4. ...
+
+  - type: textarea
+    id: technical
+    attributes:
+      label: Technical Details (Optional)
+      description: If you have technical suggestions, APIs, libraries, or implementation details
+      placeholder: |
+        - Suggested libraries or dependencies
+        - API references
+        - Technical considerations
+        - Performance requirements
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Are you willing to help implement this feature?
+      options:
+        - label: I would like to implement this feature myself
+        - label: I can help with testing
+        - label: I can provide domain expertise/guidance
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: Any other information that would be helpful
+      placeholder: |
+        - Screenshots or mockups
+        - Links to similar features in other tools
+        - Research or background information
+        - Timeline considerations 

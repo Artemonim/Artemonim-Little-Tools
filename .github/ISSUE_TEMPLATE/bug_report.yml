@@ -1,0 +1,146 @@
+name: Bug Report
+description: Report a bug or issue with LittleTools
+title: "[BUG] "
+labels: ["🐞 bug", "🤓 Check me"]
+assignees: []
+
+body:
+    - type: markdown
+      attributes:
+          value: |
+              Thanks for taking the time to report a bug! Please fill out this form as completely as possible. You can fill it in English or Russian.
+
+    - type: checkboxes
+      id: checklist
+      attributes:
+          label: Pre-submission Checklist
+          description: Please confirm you have completed these steps
+          options:
+              - label: I have read the [README.md](../README.md)
+                required: true
+              - label: I have searched for existing issues that might be related to this bug
+                required: true
+              - label: I am using the latest version of LittleTools
+                required: true
+
+    - type: dropdown
+      id: tool
+      attributes:
+          label: Affected Tool
+          description: Which LittleTools component is affected?
+          options:
+              - littletools-video (video-converter, audio-normalizer, video-compiler, etc.)
+              - littletools-txt (cyrillic-remover, telegram-distiller, etc.)
+              - littletools-speech (whisper-transcriber)
+              - littletools-cli (main menu system)
+              - littletools-core (core utilities)
+              - Setup/Installation (starting script)
+              - Other/Unknown
+      validations:
+          required: true
+
+    - type: textarea
+      id: description
+      attributes:
+          label: Bug Description
+          description: A clear and concise description of what the bug is
+          placeholder: Describe what happened and what you expected to happen
+      validations:
+          required: true
+
+    - type: checkboxes
+      id: severity
+      attributes:
+          label: Bug Severity
+          description: How severe is this bug?
+          options:
+              - label: 😵 Critical - Prevents core functionality from working
+              - label: 😭 High - Significantly impacts functionality
+              - label: 😣 Medium - Moderate impact on functionality
+              - label: 🙄 Low - Minor issue or cosmetic problem
+
+    - type: textarea
+      id: reproduction
+      attributes:
+          label: Steps to Reproduce
+          description: Step-by-step instructions to reproduce the bug
+          placeholder: |
+              1. Go to '...'
+              2. Click on '...'
+              3. Run command '...'
+              4. See error
+      validations:
+          required: true
+
+    - type: textarea
+      id: expected
+      attributes:
+          label: Expected Behavior
+          description: What should have happened instead?
+          placeholder: Describe the expected behavior
+      validations:
+          required: true
+
+    - type: textarea
+      id: actual
+      attributes:
+          label: Actual Behavior
+          description: What actually happened?
+          placeholder: Describe what actually happened, including any error messages
+      validations:
+          required: true
+
+    - type: textarea
+      id: environment
+      attributes:
+          label: Environment Information
+          description: Please provide details about your environment
+          placeholder: |
+              - OS: Windows 11 yyHv?, Linux (which distro?), macOS
+              - Python Version: 3.11.x
+              - LittleTools Version or last clone/pull date: 
+              - GPU: Which NVIDIA GPU or None?
+              - PowerShell Version: 
+              - Any relevant hardware specs:
+      validations:
+          required: true
+
+    - type: textarea
+      id: logs
+      attributes:
+          label: Error Logs/Output
+          description: If applicable, paste any error messages or relevant log output
+          render: shell
+          placeholder: |
+              Paste error messages, stack traces, or relevant output here in format:
+              ```
+              your error text here
+              ```
+
+    - type: textarea
+      id: files
+      attributes:
+          label: Sample Files
+          description: If the bug is related to file processing, please describe the input files
+          placeholder: |
+              - File type: .mp4, .txt, .wav, etc.
+              - File size: 
+              - Any special characteristics of the file
+              - Can you share a sample file? (if not sensitive)
+
+    - type: textarea
+      id: additional
+      attributes:
+          label: Additional Context
+          description: Add any other context about the problem here
+          placeholder: Screenshots, workarounds you've tried, related issues, etc.
+
+    - type: checkboxes
+      id: contribution
+      attributes:
+          label: Contribution
+          description: Are you willing to help implement this feature?
+          options:
+              - label: I would like to fix this bug myself
+              - label: I can help with testing
+              - label: I can provide domain expertise/guidance

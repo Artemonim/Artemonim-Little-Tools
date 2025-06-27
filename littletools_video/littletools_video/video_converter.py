@@ -8,8 +8,8 @@
 
     Classes/Functions:
       - Functions:
-        - single() -> None (line 278)
-        - tree() -> None (line 469)
+        - single() -> None (line 286)
+        - tree() -> None (line 478)
     --- END AUTO-GENERATED DOCSTRING ---
 Video Converter Tool
 
@@ -77,7 +77,9 @@ async def _process_single_file_for_conversion(
 ) -> None:
     """Helper to process one file asynchronously."""
     # Determine output filename: use original name or add suffix
-    output_filename = file_path.name if use_original_name else f"{file_path.stem}_converted.mp4"
+    output_filename = (
+        file_path.name if use_original_name else f"{file_path.stem}_converted.mp4"
+    )
     output_path = output_dir / output_filename
 
     eta_str = estimator.get_eta_str()
@@ -395,7 +397,13 @@ def single() -> None:  # noqa: C901
             },
             {"key": "normalize_audio", "label": "Normalize Audio", "type": "toggle"},
             {"key": "overwrite", "label": "Overwrite Files", "type": "toggle"},
-            {"key": "codec", "label": "Codec", "type": "toggle"},
+            {
+                "key": "codec",
+                "label": "Codec",
+                "type": "toggle",
+                "toggle_values": ["hevc", "h264"],
+                "display_map": {"hevc": "HEVC", "h264": "H.264"},
+            },
         ]
 
         final_settings = prompt_for_interactive_settings(
@@ -415,6 +423,18 @@ def single() -> None:  # noqa: C901
         start_time = time.monotonic()
 
         async def run_conversion() -> None:
+            # * Calculate total video duration for ETA
+            console.print("[*] Calculating total video duration for ETA...")
+            for fp in files_to_process:
+                duration = await get_video_duration(str(fp))
+                if duration:
+                    estimator.add_item(duration)
+
+            if estimator.total_workload > 0:
+                console.print(
+                    f"[*] Total video duration: {format_duration(estimator.total_workload)}"
+                )
+
             for idx, file_path in enumerate(files_to_process, 1):
                 try:
                     if output_file and total_files == 1:
@@ -574,7 +594,13 @@ def tree() -> None:  # noqa: C901
             },
             {"key": "normalize_audio", "label": "Normalize Audio", "type": "toggle"},
             {"key": "overwrite", "label": "Overwrite Files", "type": "toggle"},
-            {"key": "codec", "label": "Codec", "type": "toggle"},
+            {
+                "key": "codec",
+                "label": "Codec",
+                "type": "toggle",
+                "toggle_values": ["hevc", "h264"],
+                "display_map": {"hevc": "HEVC", "h264": "H.264"},
+            },
         ]
 
         final_settings = prompt_for_interactive_settings(

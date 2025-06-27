@@ -474,11 +474,11 @@ def prompt_for_interactive_settings(
                     "N/A",
                 )
             elif setting_type == "toggle":
-                display_value = "On" if current_value else "Off"
-
-            # Special case for codec toggle to make it more explicit
-            if key == "codec" and setting_type == "toggle":
-                display_value = f"[bold]{'H264' if current_settings['codec'] == 'h264' else 'HEVC'}[/bold] (Toggle)"
+                display_map = definition.get("display_map")
+                if display_map and current_value in display_map:
+                    display_value = f"[bold]{display_map[current_value]}[/bold] (Toggle)"
+                else:
+                    display_value = "On" if current_value else "Off"
 
             console.print(f" [cyan]{i}.[/cyan] {label:<15} : {display_value}")
 
@@ -508,13 +508,16 @@ def prompt_for_interactive_settings(
                         current_settings[key],
                     )
                 elif setting_type == "toggle":
-                    current_settings[key] = not current_settings[key]
-
-                # Special handling for codec toggle
-                if key == "codec" and setting_type == "toggle":
-                    current_settings[key] = (
-                        "h264" if current_settings[key] == "hevc" else "hevc"
-                    )
+                    toggle_values = selected_def.get("toggle_values")
+                    if toggle_values:
+                        try:
+                            idx = toggle_values.index(current_settings[key])
+                            current_settings[key] = toggle_values[(idx + 1) % len(toggle_values)]
+                        except ValueError:
+                            # If current value not in list, reset to first
+                            current_settings[key] = toggle_values[0]
+                    else:
+                        current_settings[key] = not current_settings[key]
 
             else:
                 console.print(

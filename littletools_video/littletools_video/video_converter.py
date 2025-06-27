@@ -274,7 +274,7 @@ def convert(
 
 
 @app.command()
-def single() -> None:
+def single() -> None:  # noqa: C901
     """
     Convert a single video file or all supported files in a directory with interactive prompts for all options.
     """
@@ -465,7 +465,7 @@ def single() -> None:
 
 
 @app.command()
-def tree() -> None:
+def tree() -> None:  # noqa: C901
     """
     Recursively convert all videos in a directory tree, preserving the structure.
     """
@@ -639,27 +639,72 @@ def tree() -> None:
 
                 # --- Run Conversions ---
                 console.print("\n[*] Starting video conversions...")
+
+                # Prepare tasks with quality fallback: if output larger than input, retry with lower quality
+                async def process_with_fallback(
+                    file_path: Path,
+                    out_dir: Path,
+                    position: int,
+                    total: int,
+                ) -> None:
+                    # Define quality order (higher CQ => lower quality)
+                    quality_order = ["26", "30", "34", "40"]
+                    # Start from user-selected quality
+                    try:
+                        start_idx = quality_order.index(final_settings["quality"])
+                    except ValueError:
+                        start_idx = 0
+                    input_size = file_path.stat().st_size
+                    for q in quality_order[start_idx:]:
+                        # Convert with quality q
+                        await _process_single_file_for_conversion(
+                            file_path=file_path,
+                            output_dir=out_dir,
+                            quality=q,
+                            fps=final_settings["fps"],
+                            resolution=final_settings["resolution"],
+                            normalize_audio=final_settings["normalize_audio"],
+                            overwrite=final_settings["overwrite"],
+                            codec=final_settings["codec"],
+                            stats=stats,
+                            estimator=estimator,
+                            position=position,
+                            total=total,
+                        )
+                        # Compare sizes
+                        output_path = out_dir / f"{file_path.stem}_converted.mp4"
+                        if output_path.exists():
+                            output_size = output_path.stat().st_size
+                            if output_size <= input_size:
+                                break  # acceptable size
+                            # retry with next quality level
+                            console.print(
+                                f"  [yellow]! Output larger than input, retrying with lower quality CQ={q}"
+                                + (
+                                    ""
+                                    if q == quality_order[-1]
+                                    else f" -> CQ={quality_order[quality_order.index(q)+1]}"
+                                )
+                            )
+                            stats.increment("processed")
+                            # remove previous oversized file
+                            safe_delete(output_path)
+                        else:
+                            break
+
                 tasks: List[Coroutine[Any, Any, None]] = []
                 for idx, file_path in enumerate(video_files_to_process, 1):
                     relative_path = file_path.relative_to(input_dir)
                     out_dir_for_file = output_dir / relative_path.parent
                     ensure_dir_exists(out_dir_for_file)
-
-                    task = _process_single_file_for_conversion(
-                        file_path=file_path,
-                        output_dir=out_dir_for_file,
-                        quality=final_settings["quality"],
-                        fps=final_settings["fps"],
-                        resolution=final_settings["resolution"],
-                        normalize_audio=final_settings["normalize_audio"],
-                        overwrite=final_settings["overwrite"],
-                        codec=final_settings["codec"],
-                        stats=stats,
-                        estimator=estimator,
-                        position=idx,
-                        total=len(video_files_to_process),
+                    tasks.append(
+                        process_with_fallback(
+                            file_path=file_path,
+                            out_dir=out_dir_for_file,
+                            position=idx,
+                            total=len(video_files_to_process),
+                        )
                     )
-                    tasks.append(task)
 
                 concurrency = (
                     1  # ! Sequential processing to avoid GPU resource conflicts
@@ -786,7 +831,7 @@ async def _convert_single_file_for_merge(
 
 
 @app.command()
-def merge(
+def merge(  # noqa: C901
     inputs: Annotated[
         List[Path],
         typer.Option(

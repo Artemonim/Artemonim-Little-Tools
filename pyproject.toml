@@ -2,25 +2,6 @@
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
-[project]
-name = "littletools"
-version = "0.1.0"
-description = "LittleTools - A collection of utility tools"
-readme = "README.MD"
-requires-python = ">=3.11"
-dependencies = [
-    # * Code quality and linting tools
-    "flake8>=7.0.0",
-    "mypy>=1.16.0", 
-    "black>=25.0.0",
-    "isort>=6.0.0",
-    # * Additional development dependencies
-    "types-requests>=2.31.0",
-    "types-setuptools>=69.0.0",
-    "types-Send2Trash>=1.0.0",
-    # * NPX is handled externally for pyright
-]
-
 [tool.pyright]
 # * Help Pylance/Pyright find packages in this monorepo
 # * This is necessary because of the editable installs of local packages.

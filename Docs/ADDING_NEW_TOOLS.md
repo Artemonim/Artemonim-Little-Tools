@@ -105,7 +105,7 @@ if __name__ == "__main__":
     app()
 ```
 
-3.  **Done!** Since the package is already registered in the system, you don't need to do anything else. The new command will automatically appear in the menu.
+3.  **Done!** Since the package is already registered in the system, you don't need to do anything else. The new command will automatically appear in the menu under the heading of its parent package.
 
 ---
 
@@ -168,7 +168,7 @@ This approach keeps the code clean by isolating complex logic.
     python requirementsBuilder.py littletools_video/littletools_video
     ```
 
-5.  **Done!** Run `start.bat` or `start.ps1`. Since you modified `pyproject.toml`, the installer will re-register your package, and the new command will appear in the menu. You **do not need** to edit `start.ps1`, as the parent package `littletools_video` is already included in the installation.
+5.  **Done!** Run `./start.ps1` on Windows or `./start.sh` on Linux/MacOS. Since you modified `pyproject.toml`, the installer will re-register your package, and the new command will appear in the menu (inside the section titled after your package). You **do not need** to edit startup script, as the parent package `littletools_video` is already included in the installation.
 
 ---
 
@@ -240,7 +240,7 @@ Copy and paste this template into your `pyproject.toml` and modify the highlight
 
 [project.entry-points."littletools.commands"]
 
-# `archive` is the name that will appear in the menu.
+# `archive` is the name that will appear in the menu, grouped under its package heading.
 
 # `littletools_archive.main:app` points to the `app` object in the `main.py` file.
 

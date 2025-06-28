@@ -9,9 +9,13 @@
 
     Classes/Functions:
       - Functions:
-        - get_command_plugins() -> Dict[str, typer.Typer] (line 26)
-        - post_execution_dialog() -> str (line 79)
-        - main() -> None (line 211)
+        - _load_single_plugin(entry_point: importlib.metadata.EntryPoint, failed_plugins: List[str]) -> Optional[Tuple[str, typer.Typer, str]] (line 26)
+        - _get_package_description(dist_name: str) -> str (line 55)
+        - get_command_plugins() -> Tuple[Dict[str, typer.Typer], Dict[str, str], Dict[str, str]] (line 70)
+        - post_execution_dialog() -> str (line 120)
+        - _get_click_commands(tool_app: typer.Typer) -> Tuple[List[click.Command], bool] (line 152)
+        - show_tool_menu(tool_name: str, tool_app: typer.Typer) -> Optional[str] (line 170)
+        - main() -> None (line 252)
     --- END AUTO-GENERATED DOCSTRING ---
 LittleTools CLI - Interactive Menu
 
@@ -21,9 +25,13 @@ It discovers and loads all 'tool' plugins that are installed in the environment.
 
 import importlib.metadata
 import time
+from collections import defaultdict
 from typing import Dict
+from typing import List
 from typing import Optional
+from typing import Tuple
 
+import click
 import typer
 from rich.console import Console
 
@@ -32,40 +40,96 @@ COMMANDS_GROUP = "littletools.commands"
 console = Console()
 
 
-def get_command_plugins() -> Dict[str, typer.Typer]:
-    """
-    Discovers and loads all command plugins (Typer apps) from entry points.
+def _load_single_plugin(
+    entry_point: importlib.metadata.EntryPoint, failed_plugins: List[str]
+) -> Optional[Tuple[str, typer.Typer, str]]:
+    """Load a single plugin from an entry point.
+
+    Args:
+        entry_point: The entry point to load
+        failed_plugins: List to append error messages to
 
     Returns:
-        A dictionary mapping the command name to its loaded Typer application.
+        Tuple of (plugin_name, plugin_app, dist_name) if successful, None otherwise
     """
-    plugins = {}
-    failed_plugins = []  # Track failed plugins for debugging
     try:
-        # In Python 3.10+, importlib.metadata.entry_points() returns a different
-        # object, and the .get() method is replaced by .select().
+        plugin_app = entry_point.load()
+        if not isinstance(plugin_app, typer.Typer):
+            failed_plugins.append(f"'{entry_point.name}': Not a Typer app")
+            return None
+
+        # * Determine the parent distribution name in a version-agnostic way
+        dist_name_opt: Optional[str]
+        if hasattr(entry_point, "dist") and entry_point.dist:  # Python 3.11+
+            dist_name_opt = entry_point.dist.name
+        else:
+            # * Fallback: derive from the dotted path before the first dot
+            dist_name_opt = entry_point.value.split(":", 1)[0].split(".")[0]
+
+        # * Ensure we have a non-None, hashable key for our dicts
+        dist_name: str = dist_name_opt or "unknown-package"
+
+        return entry_point.name, plugin_app, dist_name
+
+    except Exception as exc:  # pylint: disable=broad-except
+        failed_plugins.append(f"'{entry_point.name}': {type(exc).__name__}: {str(exc)}")
+        return None
+
+
+def _get_package_description(dist_name: str) -> str:
+    """Get package description from metadata.
+
+    Args:
+        dist_name: Name of the distribution package
+
+    Returns:
+        Package summary/description or empty string if not found
+    """
+    try:
+        dist_metadata = importlib.metadata.metadata(dist_name)
+        # * Use bracket notation for PackageMetadata access
+        return dist_metadata["Summary"] or ""
+    except (importlib.metadata.PackageNotFoundError, KeyError):
+        return ""
+
+
+def get_command_plugins() -> (
+    Tuple[Dict[str, typer.Typer], Dict[str, str], Dict[str, str]]
+):
+    """Discovers command plugins and maps them to their parent packages.
+
+    Returns:
+        plugins: Mapping *command name ➜ Typer app*.
+        plugin_packages: Mapping *command name ➜ distribution / package name*.
+        package_descriptions: Mapping *package name ➜ one-line description* pulled
+            from the package's metadata (``Summary`` field) if available.
+    """
+    plugins: Dict[str, typer.Typer] = {}
+    plugin_packages: Dict[str, str] = {}
+    package_descriptions: Dict[str, str] = {}
+    failed_plugins: List[str] = []  # * Collect errors for optional debug view
+
+    try:
         eps = importlib.metadata.entry_points()
         if hasattr(eps, "select"):
             entry_points = eps.select(group=COMMANDS_GROUP)
         else:
-            # Fallback for Python < 3.10
-            entry_points = eps.get(
-                COMMANDS_GROUP, []  # type: ignore
-            )  # Fallback for older importlib.metadata
+            entry_points = eps.get(COMMANDS_GROUP, [])  # type: ignore[arg-type]
 
         for entry_point in entry_points:
-            try:
-                plugin_app = entry_point.load()
-                if isinstance(plugin_app, typer.Typer):
-                    plugins[entry_point.name] = plugin_app
-                else:
-                    failed_plugins.append(f"'{entry_point.name}': Not a Typer app")
-            except Exception as e:
-                failed_plugins.append(
-                    f"'{entry_point.name}': {type(e).__name__}: {str(e)}"
-                )
+            plugin_result = _load_single_plugin(entry_point, failed_plugins)
+            if plugin_result is None:
+                continue
 
-        # * Show failed plugins info if in debug mode or if plugins missing
+            plugin_name, plugin_app, dist_name = plugin_result
+            plugins[plugin_name] = plugin_app
+            plugin_packages[plugin_name] = dist_name
+
+            # * Cache distribution summary (description) on first encounter
+            if dist_name not in package_descriptions:
+                package_descriptions[dist_name] = _get_package_description(dist_name)
+
+        # * Show failed plugins info if at least one plugin failed to load
         if failed_plugins:
             console.print(
                 f"[yellow]! Debug: Failed to load {len(failed_plugins)} plugin(s):[/yellow]"
@@ -80,9 +144,10 @@ def get_command_plugins() -> Dict[str, typer.Typer]:
             except ImportError:
                 input()  # Unix/Linux
 
-    except Exception as e:
-        console.print(f"[red]! Error discovering plugins: {e}[/red]")
-    return plugins
+    except Exception as err:  # pylint: disable=broad-except
+        console.print(f"[red]! Error discovering plugins: {err}[/red]")
+
+    return plugins, plugin_packages, package_descriptions
 
 
 def post_execution_dialog() -> str:
@@ -114,10 +179,15 @@ def post_execution_dialog() -> str:
             return "exit"
 
 
-def show_tool_menu(  # noqa: C901
-    tool_name: str, tool_app: typer.Typer
-) -> Optional[str]:
-    """Displays the menu for a specific tool group."""
+def _get_click_commands(tool_app: typer.Typer) -> Tuple[List[click.Command], bool]:
+    """Extract Click commands from a Typer app.
+
+    Args:
+        tool_app: The Typer application
+
+    Returns:
+        Tuple of (commands_list, is_group_flag)
+    """
     # Convert the Typer app to a Click Command/Group to reliably access its commands
     click_cmd = typer.main.get_command(tool_app)
 
@@ -127,6 +197,23 @@ def show_tool_menu(  # noqa: C901
     is_group = hasattr(click_cmd, "commands") and bool(
         getattr(click_cmd, "commands", {})
     )
+
+    if is_group:
+        # * Use getattr with type ignore to safely access commands
+        commands_dict = getattr(click_cmd, "commands", {})
+        commands = list(commands_dict.values())
+    else:
+        # Treat the whole Typer app as a single command.
+        commands = [click_cmd]
+
+    return commands, is_group
+
+
+def show_tool_menu(  # noqa: C901
+    tool_name: str, tool_app: typer.Typer
+) -> Optional[str]:
+    """Displays the menu for a specific tool group."""
+    commands, is_group = _get_click_commands(tool_app)
 
     should_continue = True
     while should_continue:
@@ -138,13 +225,6 @@ def show_tool_menu(  # noqa: C901
             console.print(f"  [dim]{tool_app.info.help}[/dim]")
 
         console.print("\n[bold]Available Commands:[/bold]")
-
-        # Build the list of available commands depending on whether we have a group.
-        if is_group:
-            commands = list(click_cmd.commands.values())  # type: ignore[attr-defined]
-        else:
-            # Treat the whole Typer app as a single command.
-            commands = [click_cmd]
 
         for i, command in enumerate(commands, 1):
             help_text = (
@@ -219,7 +299,7 @@ def show_tool_menu(  # noqa: C901
 
 def main() -> None:
     """Main function to run the interactive menu."""
-    command_plugins = get_command_plugins()
+    command_plugins, plugin_packages, package_descriptions = get_command_plugins()
 
     if not command_plugins:
         console.print("[yellow]! Warning: No LittleTools plugins found.[/yellow]")
@@ -237,12 +317,31 @@ def main() -> None:
         console.print("\n[bold cyan]=== LittleTools Interactive Menu ===[/bold cyan]")
         console.print("Select a tool group to see its commands:")
 
-        tool_names = list(command_plugins.keys())
-        for i, name in enumerate(tool_names, 1):
-            help_text = command_plugins[name].info.help or "No description available."
-            console.print(
-                f"  [green]{i:2d}[/green]. [bold]{name.capitalize()}[/bold] - {help_text}"
-            )
+        # * Group tools by their parent package for a cleaner UX
+        package_to_tools: Dict[str, List[str]] = defaultdict(list)
+        for tool_name, pkg_name in plugin_packages.items():
+            package_to_tools[pkg_name].append(tool_name)
+
+        # * Build a flat index so the user can still input a single number
+        index_to_tool: Dict[int, str] = {}
+        current_index = 1
+
+        for pkg_name in sorted(package_to_tools.keys()):
+            header = f"[bold underline]{pkg_name}[/bold underline]"
+            description = package_descriptions.get(pkg_name, "")
+            console.print(f"\n{header}")
+            if description:
+                console.print(f"  [dim]{description}[/dim]")
+
+            for tool in sorted(package_to_tools[pkg_name]):
+                help_text = (
+                    command_plugins[tool].info.help or "No description available."
+                )
+                console.print(
+                    f"  [green]{current_index:2d}[/green]. [bold]{tool}[/bold] - {help_text}"
+                )
+                index_to_tool[current_index] = tool
+                current_index += 1
 
         console.print("\n  [bold]0[/bold]. Exit")
 
@@ -253,8 +352,8 @@ def main() -> None:
                 break
 
             choice_idx = int(choice)
-            if 1 <= choice_idx <= len(tool_names):
-                selected_name = tool_names[choice_idx - 1]
+            if choice_idx in index_to_tool:
+                selected_name = index_to_tool[choice_idx]
                 selected_app = command_plugins[selected_name]
                 # The tool menu can now signal that we need to exit the program
                 if show_tool_menu(selected_name, selected_app) == "exit":

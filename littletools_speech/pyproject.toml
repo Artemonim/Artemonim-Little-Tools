@@ -15,7 +15,6 @@ classifiers = [
 ]
 dependencies = [
     "littletools-core",
-    "setuptools>=65.0.0",
     "wheel>=0.38.0",
     "torch>=2.0.0",
     "torchaudio>=2.0.0",

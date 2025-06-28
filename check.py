@@ -6,7 +6,7 @@ LittleTools Code Quality Checker
 Автоматизированная проверка качества кода для всего проекта LittleTools.
 
 - Всегда выполняет автофиксы форматирования (black, isort) перед анализом.
-- Использует отдельные конфиги линтеров из папки .linting/
+- Использует отдельные конфиги линтеров из папки littletools_dev/.linting/
 - Поддерживает проверку как всего проекта, так и отдельных файлов/директорий.
 - Подходит для локальной разработки и CI/CD (через --json).
 
@@ -44,6 +44,24 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+# * Get the path to linting configs
+def get_linting_config_path() -> str:
+    """Get the path to linting configuration files."""
+    # * Try littletools_dev first (new location)
+    dev_linting_path = os.path.join("littletools_dev", ".linting")
+    if os.path.exists(dev_linting_path):
+        return dev_linting_path
+    
+    # * Fallback to old location for backward compatibility
+    old_linting_path = ".linting"
+    if os.path.exists(old_linting_path):
+        return old_linting_path
+    
+    # * If neither exists, use the dev path (will cause appropriate errors)
+    return dev_linting_path
+
+LINTING_CONFIG_PATH = get_linting_config_path()
+
 # * Configuration
 TOOLS_CONFIG = {
     "pyright": {
@@ -56,7 +74,7 @@ TOOLS_CONFIG = {
     },
     "flake8": {
         "command": [sys.executable, "-m", "flake8"],
-        "args": ["--config=.linting/flake8.cfg"],
+        "args": [f"--config={LINTING_CONFIG_PATH}/flake8.cfg"],
         "description": "Style guide enforcement and error detection",
         "can_fix": False,
         "critical": True,
@@ -64,7 +82,7 @@ TOOLS_CONFIG = {
     },
     "mypy": {
         "command": [sys.executable, "-m", "mypy"],
-        "args": ["--config-file=.linting/mypy.ini"],
+        "args": [f"--config-file={LINTING_CONFIG_PATH}/mypy.ini"],
         "description": "Advanced type checking",
         "can_fix": False,
         "critical": True,
@@ -72,8 +90,8 @@ TOOLS_CONFIG = {
     },
     "black": {
         "command": [sys.executable, "-m", "black"],
-        "args": ["--check", "--diff", "--config=.linting/black.toml"],
-        "args_fix": ["--config=.linting/black.toml"],
+        "args": ["--check", "--diff", f"--config={LINTING_CONFIG_PATH}/black.toml"],
+        "args_fix": [f"--config={LINTING_CONFIG_PATH}/black.toml"],
         "description": "Code formatting check",
         "can_fix": True,
         "critical": False,
@@ -81,8 +99,8 @@ TOOLS_CONFIG = {
     },
     "isort": {
         "command": [sys.executable, "-m", "isort"],
-        "args": ["--check-only", "--diff", "--settings-path=.linting/isort.cfg"],
-        "args_fix": ["--settings-path=.linting/isort.cfg"],
+        "args": ["--check-only", "--diff", f"--settings-path={LINTING_CONFIG_PATH}/isort.cfg"],
+        "args_fix": [f"--settings-path={LINTING_CONFIG_PATH}/isort.cfg"],
         "description": "Import sorting check",
         "can_fix": True,
         "critical": False,

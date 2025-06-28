@@ -510,15 +510,6 @@ class CodeQualityChecker:
                 elif not self.json_output:
                     self.print_status(f"{tool_name}: Auto-fix had issues", "warning")
                     
-            # * Auto-install missing type stubs if MyPy is going to run
-            if "mypy" in tools_to_run and not self.json_output:
-                self.print_status("Checking for missing type stubs...")
-                # * Run mypy once to check for missing stubs
-                mypy_result = self.run_tool("mypy", fix_mode=False)
-                if mypy_result["exit_code"] != 0 and mypy_result.get("stdout"):
-                    installed_stubs = self._install_missing_type_stubs(mypy_result["stdout"])
-                    if installed_stubs:
-                        self.print_status("Type stubs installed, will re-run MyPy in analysis phase", "success")
             # * Docstring generation phase: run Agent Docstrings Generator after auto-fixes
             if not self.json_output:
                 self.print_separator("AGENT DOCSTRINGS GENERATOR")
@@ -552,6 +543,19 @@ class CodeQualityChecker:
                 )
 
             result = self.run_tool(tool_name, fix_mode)
+
+            # * Special handling for mypy: auto-install stubs and re-run if needed
+            if (
+                tool_name == "mypy"
+                and result["exit_code"] != 0
+                and result.get("stdout")
+                and not self.json_output
+            ):
+                stubs_installed = self._install_missing_type_stubs(result["stdout"])
+                if stubs_installed:
+                    self.print_status("Re-running MyPy after installing stubs...", "info")
+                    result = self.run_tool(tool_name, fix_mode)
+
             self.results[tool_name] = result
 
             if not self.json_output:

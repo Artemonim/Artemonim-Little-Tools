@@ -46,3 +46,7 @@ extend-exclude = '''
 skip-string-normalization = false
 # * Preview features
 preview = false 
+
+[tool.littletools]
+# * Global LittleTools version calculated as the highest bump across all sub-packages
+version = "1.0.0" 

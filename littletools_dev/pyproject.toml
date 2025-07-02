@@ -4,18 +4,22 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "littletools-dev"
-version = "0.1.0"
+version = "1.0.0"
 description = "Developer tools for the LittleTools project."
 requires-python = ">=3.11"
 dependencies = [
     # * Code quality and linting tools
-    "flake8>=7.0.0",
-    "mypy>=1.16.0",
-    "black>=25.0.0",
-    "isort>=6.0.0",
+    "flake8",
+    "mypy",
+    "black",
+    "isort",
+    "agent-docstrings",
     # * Additional development dependencies
-    "types-requests>=2.31.0",
-    "types-setuptools>=69.0.0",
-    "types-Send2Trash>=1.0.0",
+    "types-requests",
+    "types-setuptools",
+    "types-Send2Trash",
     # * NPX is handled externally for pyright
 ]
+
+[project.scripts]
+version-bumper = "littletools_dev.version_bumper:app"

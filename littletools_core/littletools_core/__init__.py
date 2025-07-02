@@ -11,3 +11,5 @@ from . import utils as _utils
 from .utils import *  # noqa: F401,F403
 
 __all__ = _utils.__all__
+
+__version__ = "1.0.0"

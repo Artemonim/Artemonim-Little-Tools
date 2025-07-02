@@ -78,8 +78,6 @@ body:
           label: Expected Behavior
           description: What should have happened instead?
           placeholder: Describe the expected behavior
-      validations:
-          required: true
 
     - type: textarea
       id: actual
@@ -87,15 +85,13 @@ body:
           label: Actual Behavior
           description: What actually happened?
           placeholder: Describe what actually happened, including any error messages
-      validations:
-          required: true
 
     - type: textarea
       id: environment
       attributes:
           label: Environment Information
           description: Please provide details about your environment
-          placeholder: |
+          value: |
               - OS: Windows 11 yyHv?, Linux (which distro?), macOS
               - Python Version: 3.11.x
               - LittleTools Version or last clone/pull date: 

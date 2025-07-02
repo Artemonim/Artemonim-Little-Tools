@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "littletools-txt"
-version = "0.1.0"
+version = "1.0.0"
 description = "Text processing tools for LittleTools project."
 readme = "README.md"
 requires-python = ">=3.8"

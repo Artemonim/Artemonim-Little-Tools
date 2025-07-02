@@ -134,13 +134,6 @@ function Install-Environment {
         $Requirements.Add("-e ./littletools_speech")
         $Requirements.Add("-e ./littletools_txt")
         $Requirements.Add("-e ./littletools_video")
-        # * Note: AgentDocstringsGenerator path might need adjustment if script is moved
-        $ParentDir = Split-Path $PSScriptRoot -Parent
-        $AgentDocstringsGeneratorPath = Join-Path $ParentDir "AgentDocstringsGenerator"
-        if (Test-Path $AgentDocstringsGeneratorPath) {
-            $AgentUri = "file:///" + ($AgentDocstringsGeneratorPath -replace "\\", "/")
-            $Requirements.Add("-e $AgentUri")
-        }
 
         # * [Hygiene Check] Ensure setuptools is not a runtime dependency
         $ProjectTomlFiles = Get-ChildItem -Path $PSScriptRoot -Recurse -Filter "pyproject.toml" | Where-Object { $_.FullName -notlike "*\.venv\*" }
@@ -202,7 +195,7 @@ function Install-Environment {
             # Use extra-index-url so default PyPI is preserved and CUDA index is added
             $PipCompileExtraArgs = @('--pip-args', "--extra-index-url https://download.pytorch.org/whl/cu121")
         }
-        & $VenvPaths.Python -m piptools compile @PipCompileExtraArgs --output-file $ReqsTxtFile $ReqsInFile -v
+        & $VenvPaths.Python -m piptools compile --upgrade @PipCompileExtraArgs --output-file $ReqsTxtFile $ReqsInFile -v
         if ($LASTEXITCODE -ne 0) { throw "Failed to resolve dependencies. Check for conflicts." }
         
         # * Add custom header to the generated requirements.txt

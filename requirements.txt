@@ -7,8 +7,6 @@
 #
 --extra-index-url https://download.pytorch.org/whl/cu121
 
--e file:///G:/GitHub/AgentDocstringsGenerator
-    # via -r G:\GitHub\LittleTools\temp-requirements.in
 -e file:///G:/GitHub/LittleTools/littletools_cli
     # via -r G:\GitHub\LittleTools\temp-requirements.in
 -e file:///G:/GitHub/LittleTools/littletools_core
@@ -32,6 +30,8 @@ accelerate==1.8.1
     # via littletools-video
 addict==2.4.0
     # via basicsr
+agent-docstrings==1.3.1
+    # via littletools-dev
 basicsr==1.4.2
     # via
     #   gfpgan
@@ -217,7 +217,7 @@ pathspec==0.12.1
     # via
     #   black
     #   mypy
-pillow==11.2.1
+pillow==11.3.0
     # via
     #   basicsr
     #   controlnet-aux
@@ -315,7 +315,7 @@ soupsieve==2.7
     # via beautifulsoup4
 sympy==1.14.0
     # via torch
-tb-nightly==2.20.0a20250626
+tb-nightly==2.20.0a20250630
     # via
     #   basicsr
     #   gfpgan

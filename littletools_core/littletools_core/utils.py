@@ -476,7 +476,9 @@ def prompt_for_interactive_settings(
             elif setting_type == "toggle":
                 display_map = definition.get("display_map")
                 if display_map and current_value in display_map:
-                    display_value = f"[bold]{display_map[current_value]}[/bold] (Toggle)"
+                    display_value = (
+                        f"[bold]{display_map[current_value]}[/bold] (Toggle)"
+                    )
                 else:
                     display_value = "On" if current_value else "Off"
 
@@ -512,7 +514,9 @@ def prompt_for_interactive_settings(
                     if toggle_values:
                         try:
                             idx = toggle_values.index(current_settings[key])
-                            current_settings[key] = toggle_values[(idx + 1) % len(toggle_values)]
+                            current_settings[key] = toggle_values[
+                                (idx + 1) % len(toggle_values)
+                            ]
                         except ValueError:
                             # If current value not in list, reset to first
                             current_settings[key] = toggle_values[0]

@@ -150,7 +150,7 @@ function install_environment {
         PipCompileExtraArgs+=('--pip-args' "--extra-index-url https://download.pytorch.org/whl/cu121")
     fi
     
-    "$VenvPython" -m piptools compile "${PipCompileExtraArgs[@]}" --output-file "$ReqsTxtFile" "$ReqsInFile" -v
+    "$VenvPython" -m piptools compile --upgrade "${PipCompileExtraArgs[@]}" --output-file "$ReqsTxtFile" "$ReqsInFile" -v
     if [ $? -ne 0 ]; then
         echo -e "${COLOR_RED}! Failed to resolve dependencies. Check for conflicts.${COLOR_NC}"
         rm -f "$ReqsInFile"

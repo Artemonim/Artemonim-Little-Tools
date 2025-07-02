@@ -514,7 +514,7 @@ class CodeQualityChecker:
             if not self.json_output:
                 self.print_separator("AGENT DOCSTRINGS GENERATOR")
                 self.print_status("Running Agent Docstrings Generator...")
-            cmd = [sys.executable, "-m", "agent_docstrings.cli"] + self.target_paths
+            cmd = ["agent-docstrings"] + self.target_paths
             exit_code, stdout, stderr = self.run_command(cmd)
             if not self.json_output:
                 if exit_code == 0:

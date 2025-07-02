@@ -1,0 +1,20 @@
+# .github/workflows/issue-cleanup.yml
+
+name: Issue Cleanup
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  tidy-issue:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Tidy Issue Body
+        uses: actions-cool/issues-helper@v3
+        with:
+          actions: 'tidy-issue'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.issue.number }}
+          tidy-body: true
+          tidy-title: false 

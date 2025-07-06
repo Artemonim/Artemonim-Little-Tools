@@ -1,4 +1,4 @@
-# LittleTools
+# Artemonim's Little Tools
 
 A cross-platform, modular and extensible suite of command-line utilities designed for various media, text, and AI-driven processing tasks. The project runs on Windows, Linux, and macOS, and is built with a plugin-based architecture, making it easy to add, remove, or develop new tools.
 
@@ -92,6 +92,20 @@ The following tool packages are currently available and will be automatically di
 ### Speech Tools (`littletools-speech`)
 
 -   `whisper-transcriber`: Transcribe audio files to text using OpenAI's Whisper model.
+
+## Support the Project
+
+Artemonim's Little Tools is an independent open-source project. If you find this tool useful and want to support its ongoing development, your help would be greatly appreciated.
+
+Here are a few ways you can contribute:
+
+-   **Give a Star:** The simplest way to show your support is to star the project on [GitHub](https://github.com/Artemonim/Artemonim-Little-Tools)! It increases the project's visibility.
+-   **Support My Work:** Your financial contribution helps me dedicate more time to improving this tool and creating other open-source projects. On my [**Boosty page**](https://boosty.to/artemonim), you can:
+    -   Make a **one-time donation** to thank me for this specific project.
+    -   Become a **monthly supporter** to help all of my creative endeavors.
+-   **Try a Recommended Tool:** This project was inspired by my work with LLMs. If you're looking for a great service to work with multiple neural networks, check out [**Syntx AI**](https://t.me/syntxaibot?start=aff_157453205). Using my referral link is another way to support my work at no extra cost to you.
+
+Thank you for your support!
 
 ## For Developers
 

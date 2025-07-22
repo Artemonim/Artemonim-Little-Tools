@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 import requests
-import typer
+import typer  # pyright: ignore[reportMissingImports]
 from bs4 import BeautifulSoup
 from rich.console import Console
 from typing_extensions import Annotated
@@ -41,30 +41,81 @@ OUTPUT_DIR = Path.cwd() / "0-OUTPUT-0"
 
 
 def download_syntx_content(url: str, output_path: Path):
-    """Downloads content from the given Syntx.ai URL."""
+    """Downloads content from the given SyntxAI URL."""
     try:
         response = requests.get(url)
         response.raise_for_status()
-
         soup = BeautifulSoup(response.text, "html.parser")
-
-        title_element = soup.find("h1", class_="text-lg")
-        title = title_element.text.strip() if title_element else "Untitled"
-
-        content_div = soup.find("div", class_="overflow-y-auto")
-        if not content_div:
-            console.print("[red]! Could not find content container on the page.[/red]")
-            return
-
+        if "llmchat" in url.lower():
+            title = "SyntxAI Chat"
+            content_lines = []
+            sections = soup.find_all("section", {"class": "container mt-3"})
+            for section in sections:
+                messages = section.find_all("div", {"class": "message"})
+                for msg in messages:
+                    content_div = msg.find("div", {"class": "content"})
+                    if content_div:
+                        # Remove buttons
+                        for button in content_div.find_all("button"):
+                            button.extract()
+                        # Extract model and time
+                        model = ""
+                        time_str = ""
+                        for div in content_div.find_all(
+                            "div", style=lambda value: value and "opacity: 0.7" in value
+                        ):
+                            text = div.get_text(strip=True)
+                            if "bi-robot" in str(div):
+                                model = text
+                            elif "bi-clock-history" in str(div):
+                                time_str = text
+                            div.extract()
+                        text = content_div.get_text(separator="\n", strip=True).strip()
+                        if "userquestion" in msg.get("class", []):
+                            content_lines.append(f"User:\n{text}\n")
+                        elif "answer" in msg.get("class", []):
+                            content_lines.append(f"Assistant:\n{text}\n")
+                            if model:
+                                content_lines.append(f"Model: {model}\n")
+                            if time_str:
+                                content_lines.append(f"Time: {time_str}\n")
+                content_lines.append("---\n")
+            content = "\n".join(content_lines)
+        elif "llmshare" in url.lower():
+            title = "SyntxAI Share"
+            content_div = soup.find("div", {"class": "markdown-content"})
+            if not content_div:
+                console.print(
+                    "[red]! Could not find content container on the page.[/red]"
+                )
+                return
+            text = content_div.get_text(separator="\n", strip=True).strip()
+            # Get model and time
+            model = ""
+            time_str = ""
+            for b in soup.find_all("b"):
+                if b.text.strip() == "Модель:":
+                    model = b.next_sibling.strip()
+                elif b.text.strip() == "Время:":
+                    time_str = b.next_sibling.strip()
+            content = f"{text}\n\nModel: {model}\nTime: {time_str}"
+        else:
+            # Old parsing
+            title_element = soup.find("h1", {"class": "text-lg"})
+            title = title_element.text.strip() if title_element else "Untitled"
+            content_div = soup.find("div", {"class": "overflow-y-auto"})
+            if not content_div:
+                console.print(
+                    "[red]! Could not find content container on the page.[/red]"
+                )
+                return
+            content = content_div.get_text(separator="\n", strip=True)
         filename = "".join(c for c in title if c.isalnum() or c in (" ", "_")).rstrip()
         output_file = output_path / f"{filename}.txt"
-
         with output_file.open("w", encoding="utf-8") as f:
             f.write(f"# {title}\n\n")
-            f.write(content_div.get_text(separator="\n", strip=True))
-
+            f.write(content)
         console.print(f"[green]✓ Content saved successfully to '{output_file}'[/green]")
-
     except requests.RequestException as e:
         console.print(f"[red]! Network or HTTP error: {e}[/red]")
     except Exception as e:
@@ -76,7 +127,7 @@ def run(
     url: Annotated[
         Optional[str],
         typer.Argument(
-            help="The Syntx.ai share link to download. If not provided, will prompt for it."
+            help="The SyntxAI share link to download. If not provided, will prompt for it."
         ),
     ] = None,
     output_dir: Annotated[
@@ -87,19 +138,20 @@ def run(
     ] = OUTPUT_DIR,
 ):
     """
-    Downloads and saves content from a Syntx.ai share link.
+    Downloads and saves content from a SyntxAI share link.
     """
     ensure_dir_exists(output_dir)
-
-    console.print("[*] Syntx.ai Content Downloader")
-
+    console.print("[*] SyntxAI Content Downloader")
     if not url:
-        url = typer.prompt("Please enter the Syntx.ai share link")
-
-    if not re.match(r"https://syntx\.ai/s/\S+", url):
-        console.print("[red]! Invalid Syntx.ai share link format.[/red]")
+        url = typer.prompt("Please enter the SyntxAI share link")
+    assert url is not None  # Ensure url is str for type checker
+    # Strip whitespace and surrounding angle brackets
+    url = url.strip().strip("<>")
+    # Validate URL against supported SyntxAI share and chat formats
+    pattern = r"^https://(?:syntx\.ai/s/|LLM(?:share|chat)\.syntxai\.net/)\S+$"
+    if not re.match(pattern, url, re.IGNORECASE):
+        console.print("[red]! Invalid SyntxAI share link format.[/red]")
         raise typer.Exit(code=1)
-
     download_syntx_content(url, output_dir)
 
 

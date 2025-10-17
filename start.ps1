@@ -155,20 +155,20 @@ function Install-Environment {
             try {
                 $NvidiaOutput = & nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>$null
                 if ($LASTEXITCODE -eq 0 -and $NvidiaOutput) {
-                    Write-Host "  ✓ NVIDIA GPU detected. Including xformers with CUDA support." -ForegroundColor Green
-                    $TorchPackages = @("torch", "torchvision", "torchaudio", "xformers")
+                    Write-Host "  ✓ NVIDIA GPU detected. Using CUDA wheels for PyTorch." -ForegroundColor Green
+                    $TorchPackages = @("torch", "torchaudio")
                     $PipCompileIndexArgs = "--index-url https://download.pytorch.org/whl/cu121"
                 } else {
                     Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. CPU-only PyTorch will be installed." -ForegroundColor Yellow
-                    $TorchPackages = @("torch", "torchvision", "torchaudio")
+                    $TorchPackages = @("torch", "torchaudio")
                 }
             } catch {
                 Write-Host "  ! Error checking GPU. CPU-only PyTorch will be installed." -ForegroundColor Yellow
-                $TorchPackages = @("torch", "torchvision", "torchaudio")
+                $TorchPackages = @("torch", "torchaudio")
             }
         } else {
             Write-Host "  - nvidia-smi not found. CPU-only PyTorch will be installed." -ForegroundColor Yellow
-            $TorchPackages = @("torch", "torchvision", "torchaudio")
+            $TorchPackages = @("torch", "torchaudio")
         }
         # * Add PyTorch and related packages
         foreach ($pkg in $TorchPackages) {

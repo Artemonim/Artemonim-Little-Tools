@@ -80,7 +80,6 @@ The following tool packages are currently available and will be automatically di
 -   `audio-normalizer`: Normalize audio tracks in video files to a standard loudness.
 -   `video-compiler`: Merge video files with audio/subtitles (works with any video files, not just Topaz-processed).
 -   `image-audio-to-video`: Create a video from a static image and an audio file.
--   `video-stylizer`: Apply AI-driven stylization to videos using Stable Diffusion.
 
 ### Text Tools (`littletools-txt`)
 

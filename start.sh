@@ -124,16 +124,16 @@ function install_environment {
     local PipCompileIndexArgs=""
     if command -v nvidia-smi &>/dev/null; then
         if nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits &>/dev/null; then
-            echo -e "${COLOR_GREEN}  ✓ NVIDIA GPU detected. Including xformers with CUDA support.${COLOR_NC}"
-            TorchPackages=("torch" "torchvision" "torchaudio" "xformers")
+            echo -e "${COLOR_GREEN}  ✓ NVIDIA GPU detected. Using CUDA wheels for PyTorch.${COLOR_NC}"
+            TorchPackages=("torch" "torchaudio")
             PipCompileIndexArgs="--index-url https://download.pytorch.org/whl/cu121"
         else
             echo -e "${COLOR_YELLOW}  - NVIDIA GPU not detected or nvidia-smi failed. CPU-only PyTorch will be installed.${COLOR_NC}"
-            TorchPackages=("torch" "torchvision" "torchaudio")
+            TorchPackages=("torch" "torchaudio")
         fi
     else
         echo -e "${COLOR_YELLOW}  - nvidia-smi not found. CPU-only PyTorch will be installed.${COLOR_NC}"
-        TorchPackages=("torch" "torchvision" "torchaudio")
+        TorchPackages=("torch" "torchaudio")
     fi
     
     for pkg in "${TorchPackages[@]}"; do
@@ -178,11 +178,11 @@ function install_environment {
     
     rm -f "$ReqsInFile"
 
-    echo -e "${COLOR_YELLOW}* Verifying PyTorch CUDA installation...${COLOR_NC}"
-    local CudaCheck
-    CudaCheck=$("$VenvPython" -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}\\nPyTorch version: {torch.__version__}')" 2>/dev/null)
+    echo -e "${COLOR_YELLOW}* Verifying PyTorch installation...${COLOR_NC}"
+    local TorchCheck
+    TorchCheck=$("$VenvPython" -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}\\nPyTorch version: {torch.__version__}')" 2>/dev/null)
     if [ $? -eq 0 ]; then
-        echo -e "${COLOR_CYAN}  $CudaCheck${COLOR_NC}"
+        echo -e "${COLOR_CYAN}  $TorchCheck${COLOR_NC}"
     fi
 }
 

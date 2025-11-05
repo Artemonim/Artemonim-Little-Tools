@@ -568,37 +568,40 @@ async def run_tasks_with_semaphore(
 
     running_tasks = [asyncio.create_task(run_task(task)) for task in tasks]
 
-    # gather() is awaitable itself, no need to wrap in a task.
+    # gather() is awaitable itself, wrap it into a Task to unify types for wait()
     gather_future = asyncio.gather(*running_tasks)
+    from typing import Any as _Any
+
+    gather_task: asyncio.Future[_Any] = asyncio.ensure_future(gather_future)
 
     # Create a task that waits for the stop event.
     stop_task = asyncio.create_task(stop_event.wait())
 
     try:
         # Wait for either the gather_future (all tasks done) or stop_task to complete.
-        done, pending = await asyncio.wait(
-            [gather_future, stop_task], return_when=asyncio.FIRST_COMPLETED
+        done, _pending = await asyncio.wait(
+            {gather_task, stop_task}, return_when=asyncio.FIRST_COMPLETED
         )
 
         # If the stop_task finished, it means we need to cancel the pending tasks.
         if stop_task in done:
             # Cancel the future, which will propagate cancellation to its children.
-            gather_future.cancel()
+            gather_task.cancel()
 
         # If the gather_future finished, we no longer need the stop_task.
-        if gather_future in done:
+        if gather_task in done:
             stop_task.cancel()
 
         # Await the gather_future to propagate any exceptions or cancellations.
-        await gather_future
+        await gather_task
 
     except (asyncio.CancelledError, KeyboardInterrupt):
         # The entire run_tasks_with_semaphore function was cancelled.
         # Clean up by cancelling all spawned tasks.
-        gather_future.cancel()
+        gather_task.cancel()
         stop_task.cancel()
         # Await them to ensure they are fully cancelled before re-raising.
-        await asyncio.gather(gather_future, stop_task, return_exceptions=True)
+        await asyncio.gather(gather_task, stop_task, return_exceptions=True)
         raise
 
 

@@ -85,6 +85,69 @@ DEFAULT_OUTPUT_FOLDER = "./normalized"
 # * Instantiate a shared Rich console for styled output
 console = Console()
 
+# * Encoder detection cache (to decide between NVENC and software encoders)
+_nvenc_encoders_cache: Optional[Dict[str, bool]] = None
+_warned_about_fallback: bool = False
+
+
+def _probe_ffmpeg_nvenc_encoders() -> Dict[str, bool]:
+    """Probe FFmpeg for NVENC encoders availability."""
+    available = {"h264_nvenc": False, "hevc_nvenc": False}
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            text = (result.stdout or "") + (result.stderr or "")
+            for name in available.keys():
+                available[name] = name in text
+    except Exception:
+        # If probing fails, keep defaults (not available)
+        pass
+    return available
+
+
+def _is_nvenc_available_for(codec: str) -> bool:
+    """Return True if NVENC encoder for the requested codec is available in FFmpeg."""
+    global _nvenc_encoders_cache
+    if _nvenc_encoders_cache is None:
+        _nvenc_encoders_cache = _probe_ffmpeg_nvenc_encoders()
+    if codec == "h264":
+        return _nvenc_encoders_cache.get("h264_nvenc", False)
+    return _nvenc_encoders_cache.get("hevc_nvenc", False)
+
+
+def _get_software_video_options(codec: str, quality: str) -> list[str]:
+    """Return software encoder options (libx264/libx265) roughly mapped from CQ.
+
+    CQ (NVENC) to CRF (x264/x265) mapping (approx.):
+      26 -> 18, 30 -> 22, 34 -> 26, 40 -> 30
+    """
+    cq_to_crf = {"26": "18", "30": "22", "34": "26", "40": "30"}
+    crf_value = cq_to_crf.get(quality, "22")
+
+    base = ["-movflags", "+faststart"]
+    if codec == "h264":
+        return [
+            "-c:v",
+            "libx264",
+            "-preset",
+            "slow",
+            "-crf",
+            crf_value,
+        ] + base
+    # default to HEVC
+    return [
+        "-c:v",
+        "libx265",
+        "-preset",
+        "slow",
+        "-crf",
+        crf_value,
+    ] + base
+
 
 class ProcessingStats:
     """Class to track file processing statistics."""
@@ -405,65 +468,72 @@ def get_metadata_options(
 
 def get_nvenc_video_options(codec: str, quality: str) -> list[str]:
     """
-    Returns a list of recommended FFmpeg options for NVENC encoding.
+    Return recommended FFmpeg options for encoding.
 
-    These settings are optimized for quality and compatibility based on
-    experimental results.
-
-    Args:
-        codec: The video codec to use ('hevc' or 'h264').
-        quality: The Constant Quality (CQ) value as a string.
-
-    Returns:
-        A list of FFmpeg command-line arguments for video encoding.
+    Prefers NVENC (h264_nvenc/hevc_nvenc) if available; otherwise falls back to
+    software encoders (libx264/libx265) with approximate quality mapping.
     """
-    # * Base options are shared between H.264 and HEVC for consistency.
-    base_options = [
-        "-rc",
-        "vbr_hq",
-        "-cq",
-        quality,
-        "-spatial_aq",
-        "1",
-        "-temporal_aq",
-        "1",
-        "-aq-strength",
-        "8",
-        "-rc-lookahead",
-        "32",
-        "-refs",
-        "4",
-        "-movflags",
-        "+faststart",
-    ]
+    # If NVENC is available for the requested codec, use the existing NVENC tuning
+    if _is_nvenc_available_for(codec):
+        # * Base options are shared between H.264 and HEVC for consistency.
+        base_options = [
+            "-rc",
+            "vbr_hq",
+            "-cq",
+            quality,
+            "-spatial_aq",
+            "1",
+            "-temporal_aq",
+            "1",
+            "-aq-strength",
+            "8",
+            "-rc-lookahead",
+            "32",
+            "-refs",
+            "4",
+            "-movflags",
+            "+faststart",
+        ]
 
-    if codec == "h264":
-        # * H.264 uses a smaller number of B-frames.
-        # * Use new preset system. p5 ('slow') is a good balance of speed/quality.
+        if codec == "h264":
+            # * H.264 uses a smaller number of B-frames.
+            # * Use new preset system. p5 ('slow') is a good balance of speed/quality.
+            return [
+                "-c:v",
+                "h264_nvenc",
+                "-preset",
+                "p5",
+                "-tune",
+                "hq",
+                "-bf",
+                "2",
+            ] + base_options
+
+        # * Default to HEVC (h265), which has more advanced options.
         return [
             "-c:v",
-            "h264_nvenc",
+            "hevc_nvenc",
             "-preset",
             "p5",
             "-tune",
             "hq",
             "-bf",
-            "2",
+            "4",
+            "-b_ref_mode",
+            "middle",
         ] + base_options
 
-    # * Default to HEVC (h265), which has more advanced options.
-    return [
-        "-c:v",
-        "hevc_nvenc",
-        "-preset",
-        "p5",
-        "-tune",
-        "hq",
-        "-bf",
-        "4",
-        "-b_ref_mode",
-        "middle",
-    ] + base_options
+    # NVENC not available — warn once and fall back to software encoders
+    global _warned_about_fallback
+    if not _warned_about_fallback:
+        console.print(
+            "[yellow]! NVENC encoders are not available in your FFmpeg build. Falling back to software encoders (libx264/libx265).[/yellow]"
+        )
+        console.print(
+            "[dim]Tip: Install an FFmpeg build with NVENC support to use hardware acceleration.[/dim]"
+        )
+        _warned_about_fallback = True
+    return _get_software_video_options(codec, quality)
 
 
 async def run_ffmpeg_command(  # noqa: C901
@@ -586,7 +656,12 @@ async def run_ffmpeg_command(  # noqa: C901
         else:
             if stats and not stats.interrupted:
                 stats.increment("errors")
-            # * Suppress FFmpeg error log details
+            # * Print concise tail of FFmpeg stderr to aid debugging
+            error_tail = stderr_output[-20:]
+            if error_tail:
+                console.print("[red]! FFmpeg reported an error. Last lines:[/red]")
+                for ln in error_tail[-10:]:
+                    console.print(f"[dim]{ln}[/dim]")
             return False
 
     except asyncio.CancelledError:

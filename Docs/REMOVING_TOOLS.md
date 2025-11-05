@@ -43,8 +43,7 @@ This is the complete removal of an entire category of tools.
 
 1.  **Deregister the package:**
     -   Open `start.ps1` in the project root.
-    -   Find the `& $VenvPython -m pip install ...` line.
-    -   Remove the flag for your package from this line (e.g., `-e ./littletools_archive`).
+    -   Remove the package line from the dynamically built `$Requirements` list (e.g., `-e ./littletools_archive`).
 2.  **Delete the folder:** Completely delete your package directory (e.g., `littletools_archive`).
 3.  **(Mandatory) Clean the environment:** Run `start.bat` or `start.ps1` and select option **[1] Install or Update All Tools**. The script will automatically uninstall all packages related to the tool you removed.
 

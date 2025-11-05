@@ -131,7 +131,7 @@ function Install-Environment {
         $Requirements.Add("-e ./littletools_dev")
         $Requirements.Add("-e ./littletools_cli")
         $Requirements.Add("-e ./littletools_core")
-        $Requirements.Add("-e ./littletools_speech")
+        # * Speech plugin removed; do not include littletools_speech
         $Requirements.Add("-e ./littletools_txt")
         $Requirements.Add("-e ./littletools_video")
 
@@ -146,33 +146,35 @@ function Install-Environment {
             }
         }
 
-        # * Determine PyTorch and optional xformers requirements
-        Write-Host "* Determining PyTorch package list..." -ForegroundColor Yellow
-        $TorchPackages = @()
-        $PipCompileIndexArgs = ""
-        $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
-        if ($NvidiaSmi) {
-            try {
-                $NvidiaOutput = & nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>$null
-                if ($LASTEXITCODE -eq 0 -and $NvidiaOutput) {
-                    Write-Host "  ✓ NVIDIA GPU detected. Using CUDA wheels for PyTorch." -ForegroundColor Green
-                    $TorchPackages = @("torch", "torchaudio")
-                    $PipCompileIndexArgs = "--index-url https://download.pytorch.org/whl/cu121"
-                } else {
-                    Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+        # * Only include PyTorch when speech tools are present
+        $HasSpeech = Test-Path (Join-Path $PSScriptRoot "littletools_speech")
+        if ($HasSpeech) {
+            Write-Host "* Determining PyTorch package list..." -ForegroundColor Yellow
+            $TorchPackages = @()
+            $PipCompileIndexArgs = ""
+            $NvidiaSmi = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+            if ($NvidiaSmi) {
+                try {
+                    $NvidiaOutput = & nvidia-smi --query-gpu=driver_version --format=csv,noheader,nounits 2>$null
+                    if ($LASTEXITCODE -eq 0 -and $NvidiaOutput) {
+                        Write-Host "  ✓ NVIDIA GPU detected. Using CUDA wheels for PyTorch." -ForegroundColor Green
+                        $TorchPackages = @("torch", "torchaudio")
+                        $PipCompileIndexArgs = "--index-url https://download.pytorch.org/whl/cu121"
+                    } else {
+                        Write-Host "  - NVIDIA GPU not detected or nvidia-smi failed. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+                        $TorchPackages = @("torch", "torchaudio")
+                    }
+                } catch {
+                    Write-Host "  ! Error checking GPU. CPU-only PyTorch will be installed." -ForegroundColor Yellow
                     $TorchPackages = @("torch", "torchaudio")
                 }
-            } catch {
-                Write-Host "  ! Error checking GPU. CPU-only PyTorch will be installed." -ForegroundColor Yellow
+            } else {
+                Write-Host "  - nvidia-smi not found. CPU-only PyTorch will be installed." -ForegroundColor Yellow
                 $TorchPackages = @("torch", "torchaudio")
             }
+            foreach ($pkg in $TorchPackages) { $Requirements.Add($pkg) }
         } else {
-            Write-Host "  - nvidia-smi not found. CPU-only PyTorch will be installed." -ForegroundColor Yellow
-            $TorchPackages = @("torch", "torchaudio")
-        }
-        # * Add PyTorch and related packages
-        foreach ($pkg in $TorchPackages) {
-            $Requirements.Add($pkg)
+            Write-Host "* Skipping PyTorch installation (speech tools removed)." -ForegroundColor Yellow
         }
 
         # * Define temporary file paths
@@ -216,11 +218,13 @@ function Install-Environment {
         # * Clean up temporary .in file
         Remove-Item $ReqsInFile -ErrorAction SilentlyContinue
 
-        # * Verify CUDA availability for tools that require it
-        Write-Host "* Verifying PyTorch CUDA installation..." -ForegroundColor Yellow
-        $CudaCheck = & $VenvPaths.Python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('PyTorch version:', torch.__version__)" 2>$null
-        if ($LASTEXITCODE -eq 0) {
-            Write-Host "  $CudaCheck" -ForegroundColor Cyan
+        # * Verify CUDA availability only if speech tools (PyTorch) are installed
+        if ($HasSpeech) {
+            Write-Host "* Verifying PyTorch CUDA installation..." -ForegroundColor Yellow
+            $CudaCheck = & $VenvPaths.Python -c "import torch; print('CUDA available:', torch.cuda.is_available()); print('PyTorch version:', torch.__version__)" 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                Write-Host "  $CudaCheck" -ForegroundColor Cyan
+            }
         }
         
     } catch [System.Management.Automation.PipelineStoppedException] {

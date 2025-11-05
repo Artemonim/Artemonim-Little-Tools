@@ -112,7 +112,6 @@ TOOLS_CONFIG = {
 TARGET_DIRS = [
     "littletools_cli",
     "littletools_core",
-    "littletools_speech",
     "littletools_txt",
     "littletools_video",
 ]

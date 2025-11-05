@@ -8,7 +8,7 @@ Each "tool" (e.g., `video-converter`) is part of a thematic Python package (e.g.
 
 Your main task when adding new functionality is to decide:
 
-1.  **Extend an existing package?** If your new function is closely related to video, text, audio, etc., you should add it to the corresponding package (`littletools_video`, `littletools_txt`, `littletools_speech`). This is the preferred method as it promotes code reuse.
+1.  **Extend an existing package?** If your new function is closely related to video or text, you should add it to the corresponding package (`littletools_video`, `littletools_txt`). Speech tools are decommissioned from this monorepo; see `Artemonim's Speach Kit`.
 2.  **Create a new package?** If your function represents a completely new category of tools (e.g., working with archives or images), then a new package should be created.
 
 In both cases, it is important to actively use the common utilities from `littletools-core` to avoid code duplication.

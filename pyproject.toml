@@ -8,7 +8,6 @@ build-backend = "setuptools.build_meta"
 extraPaths = [
     "./littletools_cli",
     "./littletools_core",
-    "./littletools_speech",
     "./littletools_txt",
     "./littletools_video",
 ]

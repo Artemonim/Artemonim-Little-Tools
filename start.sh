@@ -178,11 +178,14 @@ function install_environment {
     
     rm -f "$ReqsInFile"
 
-    echo -e "${COLOR_YELLOW}* Verifying PyTorch installation...${COLOR_NC}"
-    local TorchCheck
-    TorchCheck=$("$VenvPython" -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}\\nPyTorch version: {torch.__version__}')" 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        echo -e "${COLOR_CYAN}  $TorchCheck${COLOR_NC}"
+    # * Verify PyTorch only when speech tools are present
+    if [ "$HasSpeech" -eq 1 ]; then
+        echo -e "${COLOR_YELLOW}* Verifying PyTorch installation...${COLOR_NC}"
+        local TorchCheck
+        TorchCheck=$("$VenvPython" -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}\\nPyTorch version: {torch.__version__}')" 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            echo -e "${COLOR_CYAN}  $TorchCheck${COLOR_NC}"
+        fi
     fi
 }
 

@@ -88,9 +88,9 @@ The following tool packages are currently available and will be automatically di
 -   `syntx-downloader`: A tool for downloading from Syntx.
 -   `wmd-converter`: A converter for WMD files.
 
-### Speech Tools (`littletools-speech`)
+### Speech Tools
 
--   `whisper-transcriber`: Transcribe audio files to text using OpenAI's Whisper model.
+-   Speech tools are currently decommissioned from this monorepo. The main speech functionality now lives in `Artemonim's Speach Kit`.
 
 ## Support the Project
 

@@ -270,7 +270,7 @@ def convert(
                 estimator,
                 i + 1,
                 len(files_to_process),
-                use_original_name=False,
+                use_original_name=overwrite,
             )
             for i, file in enumerate(files_to_process)
         ]
@@ -469,7 +469,7 @@ def single() -> None:  # noqa: C901
                         estimator=estimator,
                         position=idx,
                         total=total_files,
-                        use_original_name=False,
+                        use_original_name=final_settings["overwrite"],
                     )
                     # If single file and custom output name, rename result
                     if output_file and total_files == 1:

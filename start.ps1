@@ -123,7 +123,11 @@ function Install-Environment {
     Write-Host "  This can take a few minutes if new dependencies (like torch) are being downloaded."
     try {
         # * Use pip-tools for robust dependency management (install, update, and removal of orphans)
-        & $VenvPaths.Python -m pip install --upgrade pip pip-tools
+        # * Ensure a pip version compatible with pip-tools is installed first to avoid
+        # * runtime API incompatibilities between pip and pip-tools.
+        & $VenvPaths.Python -m pip install --upgrade pip==23.1.2
+        if ($LASTEXITCODE -ne 0) { throw "Failed to upgrade pip to a compatible version." }
+        & $VenvPaths.Python -m pip install --upgrade pip-tools
         if ($LASTEXITCODE -ne 0) { throw "Failed to install pip-tools." }
 
         # * Dynamically build a requirements.in file

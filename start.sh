@@ -88,7 +88,13 @@ function install_environment {
     echo -e "${COLOR_YELLOW}* Installing/updating all LittleTools packages with pip-tools...${COLOR_NC}"
     echo -e "  This can take a few minutes if new dependencies (like torch) are being downloaded."
     
-    "$VenvPython" -m pip install --upgrade pip pip-tools &>/dev/null
+    # Ensure pip version compatible with pip-tools to avoid runtime API mismatches
+    "$VenvPython" -m pip install --upgrade pip==23.1.2 &>/dev/null
+    if [ $? -ne 0 ]; then
+        echo -e "${COLOR_RED}! Failed to upgrade pip to a compatible version.${COLOR_NC}"
+        return 1
+    fi
+    "$VenvPython" -m pip install --upgrade pip-tools &>/dev/null
     if [ $? -ne 0 ]; then
         echo -e "${COLOR_RED}! Failed to install pip-tools.${COLOR_NC}"
         return 1

@@ -13,7 +13,6 @@ dependencies = [
     "mypy",
     "black",
     "isort",
-    "agent-docstrings",
     # * Additional development dependencies
     "types-requests",
     "types-setuptools",

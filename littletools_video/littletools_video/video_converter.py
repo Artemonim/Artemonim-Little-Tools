@@ -69,6 +69,36 @@ def _get_cq40_scale_filter() -> str:
     return "scale=if(gt(iw\\,ih)\\,-2\\,720):if(gt(iw\\,ih)\\,720\\,-2)"
 
 
+def _resolve_output_path(
+    output_dir: Path,
+    output_filename: Optional[str],
+    file_path: Path,
+    use_original_name: bool,
+) -> Path:
+    """Resolve the final output path safely across platforms.
+
+    - If output_filename is a fully-qualified absolute path with drive (Windows), it is used as-is.
+    - If output_filename starts with a root only (e.g., '\\name.mp4' on Windows), it is treated as relative to output_dir.
+    - Otherwise, compose the path within output_dir using either the provided filename or a default.
+    """
+    if output_filename:
+        candidate = Path(output_filename)
+        # Windows: fully-qualified absolute path with drive (e.g., C:\\dir\\file.mp4)
+        if candidate.is_absolute() and candidate.drive:
+            return candidate
+        # Windows: anchored path without drive (e.g., \\dir\\file.mp4) -> treat as relative
+        if candidate.anchor and not candidate.drive:
+            candidate = (
+                Path(*candidate.parts[1:])
+                if len(candidate.parts) > 1
+                else Path(candidate.name)
+            )
+        return output_dir / candidate
+
+    name = file_path.name if use_original_name else f"{file_path.stem}_converted.mp4"
+    return output_dir / name
+
+
 async def _process_single_file_for_conversion(
     file_path: Path,
     output_dir: Path,
@@ -86,14 +116,13 @@ async def _process_single_file_for_conversion(
     output_filename: Optional[str] = None,
 ) -> None:
     """Helper to process one file asynchronously."""
-    # Determine output filename: use provided, original name, or add suffix
-    if output_filename:
-        output_filename = output_filename
-    else:
-        output_filename = (
-            file_path.name if use_original_name else f"{file_path.stem}_converted.mp4"
-        )
-    output_path = output_dir / output_filename
+    # * Resolve the output file path safely
+    output_path = _resolve_output_path(
+        output_dir=output_dir,
+        output_filename=output_filename,
+        file_path=file_path,
+        use_original_name=use_original_name,
+    )
 
     eta_str = estimator.get_eta_str()
     console.print(
@@ -356,9 +385,19 @@ def single() -> None:  # noqa: C901
                 "Enter the output file path (or press Enter for default)",
                 default=str(OUTPUT_DIR / default_output_name),
             )
-            output_file = Path(output_str.strip().strip('"'))
-            output_dir = output_file.parent  # Define output_dir for single file
-            ensure_dir_exists(output_file.parent)
+            output_candidate = Path(output_str.strip().strip('"'))
+            supported_extensions = [".mp4", ".mkv", ".mov", ".avi", ".webm"]
+            # Treat as directory if it is an existing dir OR has no recognized extension
+            if output_candidate.is_dir() or output_candidate.suffix.lower() not in supported_extensions:
+                # Interpret provided path as a directory for single-file conversion
+                output_file = None
+                output_dir = output_candidate
+                ensure_dir_exists(output_dir)
+            else:
+                # Interpret provided path as a file target
+                output_file = output_candidate
+                output_dir = output_file.parent
+                ensure_dir_exists(output_file.parent)
         else:
             output_str = typer.prompt(
                 "Enter the output directory for converted files (or press Enter for default)",

@@ -50,6 +50,8 @@ converted/
 processed/
 output/
 temp/
+littletools_video/benchmark/testData/
+littletools_video/benchmark/reports/
 
 # OS specific files
 .DS_Store

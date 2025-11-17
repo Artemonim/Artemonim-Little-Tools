@@ -44,6 +44,7 @@ from littletools_core.utils import run_tasks_with_semaphore
 from littletools_core.utils import safe_delete
 from littletools_core.utils import setup_signal_handler
 from littletools_video.ffmpeg_utils import ProcessingStats
+from littletools_video.ffmpeg_utils import get_audio_sample_rate
 from littletools_video.ffmpeg_utils import get_nvenc_video_options
 from littletools_video.ffmpeg_utils import get_video_duration
 from littletools_video.ffmpeg_utils import get_video_resolution
@@ -166,11 +167,15 @@ async def _process_single_file_for_conversion(
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
 
-    audio_cmd = (
-        ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
-        if normalize_audio
-        else ["-c:a", "copy"]
-    )
+    # * Get original audio sample rate to preserve it during normalization
+    original_sample_rate = await get_audio_sample_rate(str(file_path))
+
+    if normalize_audio:
+        audio_cmd = ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
+        if original_sample_rate:
+            audio_cmd.extend(["-ar", str(original_sample_rate)])
+    else:
+        audio_cmd = ["-c:a", "copy"]
 
     cmd = (
         ["ffmpeg", "-y", "-i", str(file_path)]
@@ -908,11 +913,15 @@ async def _convert_single_file_for_merge(
     if filters:
         video_cmd.extend(["-vf", ",".join(filters)])
 
-    audio_cmd = (
-        ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
-        if normalize_audio
-        else ["-c:a", "copy"]
-    )
+    # * Get original audio sample rate to preserve it during normalization
+    original_sample_rate = await get_audio_sample_rate(str(file_path))
+
+    if normalize_audio:
+        audio_cmd = ["-c:a", "aac", "-b:a", "192k", "-af", "loudnorm=I=-16:TP=-3:LRA=11"]
+        if original_sample_rate:
+            audio_cmd.extend(["-ar", str(original_sample_rate)])
+    else:
+        audio_cmd = ["-c:a", "copy"]
 
     cmd = (
         ["ffmpeg", "-y", "-i", str(file_path)]

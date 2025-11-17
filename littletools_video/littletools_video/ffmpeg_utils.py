@@ -755,6 +755,46 @@ async def get_video_resolution(input_path: str) -> Optional[tuple[int, int]]:
         return None
 
 
+async def get_audio_sample_rate(input_path: str) -> Optional[int]:
+    """Get audio sample rate (frequency) in Hz using ffprobe."""
+    ffprobe_cmd = [
+        "ffprobe",
+        "-v",
+        "error",
+        "-select_streams",
+        "a:0",
+        "-show_entries",
+        "stream=sample_rate",
+        "-of",
+        "default=noprint_wrappers=1:nokey=1",
+        str(input_path),
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *ffprobe_cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0 and stdout:
+            sample_rate_str = stdout.decode().strip()
+            if sample_rate_str.isdigit():
+                return int(sample_rate_str)
+            else:
+                print(
+                    f"! ffprobe returned invalid sample rate for {Path(input_path).name}: {sample_rate_str}"
+                )
+                return None
+        else:
+            # ! Don't print error if there's no audio stream, it's a valid case for video-only files.
+            if "Stream specifier a:0 matches no streams" not in stderr.decode():
+                print(
+                    f"! ffprobe error getting sample rate for {Path(input_path).name}: {stderr.decode()}"
+                )
+            return None
+    except Exception as e:
+        print(f"! Exception getting sample rate for {Path(input_path).name}: {e}")
+        return None
+
+
 async def convert_to_compatible_mp4(
     input_path: str, output_dir: str = "temp_videos"
 ) -> Optional[str]:

@@ -32,6 +32,7 @@ audio-normalizer = "littletools_video.audio_normalizer:main"
 video-compiler = "littletools_video.video_compiler:main"
 video-converter = "littletools_video.video_converter:main"
 image-audio-to-video = "littletools_video.Image_Audio_To_Video:main"
+nvenc-benchmark = "littletools_video.benchmark:nvenc_main"
 
 [project.entry-points."littletools.commands"]
 video-converter = "littletools_video.video_converter:app"
